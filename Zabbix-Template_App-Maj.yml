@@ -1,0 +1,67 @@
+zabbix_export:
+  version: '5.0'
+  date: '2022-06-08T13:57:48Z'
+  groups:
+    -
+      name: Templates/Applications
+  templates:
+    -
+      template: 'Template App MAJ'
+      name: 'Template App MAJ'
+      description: 
+        Crée par Drackorr
+        
+        https://github.com/Drack0rr
+      groups:
+        -
+          name: Templates/Applications
+      items:
+        -
+          name: 'Liste des conteneurs à mettre à jour'
+          type: TRAP
+          key: update.container_to_update_names
+          delay: '0'
+          trends: '0'
+          value_type: CHAR
+          tags:
+            -
+              tag: Application
+              value: Maj
+        -
+          name: 'Nombre de conteneurs à mettre à jour'
+          type: TRAP
+          key: update.container_to_update_nb
+          delay: '0'
+          tags:
+            -
+              tag: Application
+              value: Maj
+        -
+          name: 'Liste mise à jour des conteneurs'
+          type: TRAP
+          key: update.container_updated_names
+          delay: '0'
+          trends: '0'
+          value_type: CHAR
+          tags:
+            -
+              tag: Application
+              value: Maj
+        -
+          name: 'Nombre de conteneurs mis à jour'
+          type: TRAP
+          key: update.container_updated_nb
+          delay: '0'
+          tags:
+            -
+              tag: Application
+              value: Maj
+        -
+          name: 'Nombre de paquets à mettre à jour'
+          type: TRAP
+          key: update.paquets
+          delay: '0'
+          tags:
+            -
+              tag: Application
+              value: Maj
