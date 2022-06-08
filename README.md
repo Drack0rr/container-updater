@@ -2,7 +2,7 @@
   <a href="#"><img src="https://readme-typing-svg.herokuapp.com?center=true&vCenter=true&lines=Container+updater;"></a>
 </p>
 <p align="center">
-    🚀 Un petit script bash pour les conteneurs d'alerte et de mise à jour automatique déployés avec docker run, docker-compose ou Portainer.
+    🚀 Un petit script bash pour mettre à jour les conteneurs avec alerte et de mise à jour automatique avec Portainer.
 </p>
 <p align="center">
     <a href="https://github.com/Drack0rr/container-updater#conditions"><img src="https://img.shields.io/badge/How_to_use-%2341454A.svg?style=for-the-badge&logo=target&logoColor=white"> </a>
