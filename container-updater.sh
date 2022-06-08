@@ -92,7 +92,7 @@ if [[ -n $ZABBIX_SRV ]]; then
 fi
 
 if [[ -z "$PAQUET_UPDATE" ]]; then
-   echo " ✅ Le système est déjà à jour."
+   echo " ✅   Le système est déjà à jour."
 fi
 
 # Vérifie que docker est en cours d'exécution
