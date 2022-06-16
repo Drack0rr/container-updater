@@ -78,7 +78,7 @@ while read line ; do
       status=$?
       if test $status -eq 0; then
          echo " 🔆 [$PAQUET] Mise à jour réussie !"
-         UPDATED=$(echo -E "$UPDATED 📦$PAQUET\n")
+         UPDATED=$(echo -E "$UPDATED📦$PAQUET\n")
       else
          echo " ❌ [$PAQUET] Mise à jour a échoué !"
          PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
