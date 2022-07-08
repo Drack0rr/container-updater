@@ -95,8 +95,8 @@ elif [ -x "$(command -v apt-get)" ]; then
          PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
          ((PAQUET_NB++))
       else
-         echo " 🚀 [$PAQUET] Lance la mise à jour ! !"
-         apt-get --only-upgrade install $PAQUET > /dev/null 2> /dev/null
+         echo " 🚀 [$PAQUET] Lance la mise à jour !"
+         apt-get --only-upgrade install $PAQUET -y > /dev/null 2> /dev/null
          status=$?
          if test $status -eq 0; then
             echo " 🔆 [$PAQUET] Mise à jour réussie !"
