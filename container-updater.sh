@@ -84,7 +84,7 @@ if [ -x "$(command -v dnf)" ]; then
    rm -f temp
 elif [ -x "$(command -v apt-get)" ]; then
    # Mise à jour debian
-   apt update > /dev/null 2> /dev/null
+   apt update -y > /dev/null 2> /dev/null
 
    apt list --upgradable 2> /dev/null | tail -n +2 >> temp
    while read line ; do 
