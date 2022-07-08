@@ -137,8 +137,9 @@ Check-Image-Uptdate () {
 Check-Local-Digest () {
    DIGEST_LOCAL=$(docker images -q --no-trunc $IMAGE_LOCAL)
    if [ -z "${DIGEST_LOCAL}" ] ; then
-      echo "Local digest: not found" 1>&2
-      echo "For security reasons, this script only allows updates of already pulled images." 1>&2
+      echo "Local digest: introuvable" 1>&2
+      echo "Pour des raisons de sécurité, ce script n'autorise que les mises à jour des images déjà extraites." 1>&2
+      echo "Erreur sur l'image : $IMAGE_LOCAL"
       exit 1
    fi
    #echo "Local digest:  ${DIGEST_LOCAL}"
