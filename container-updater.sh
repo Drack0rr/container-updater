@@ -52,12 +52,14 @@ if [ "$EUID" -ne 0 ]
   then echo " ❌ Veuillez exécuter en tant que root"
   exit 1
 fi
+
+PAQUET_UPDATE=""
+PAQUET_NB=0
+
 if [ -x "$(command -v dnf)" ]; then
    # Mise à jour rhel
    dnf list --upgrades > /dev/null 2> /dev/null
 
-   PAQUET_UPDATE=""
-   PAQUET_NB=0
    dnf list --upgrades 2> /dev/null | tail -n +3 >> temp
 
    while read line ; do 
@@ -85,8 +87,6 @@ elif [ -x "$(command -v apt-get)" ]; then
    # Mise à jour debian
    apt update > /dev/null 2> /dev/null
 
-   PAQUET_UPDATE=""
-   PAQUET_NB=0
    apt list --upgradable 2> /dev/null | tail -n +2 >> temp
    while read line ; do 
       PAQUET=$(echo $line | cut -d / -f 1)
