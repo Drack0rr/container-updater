@@ -446,7 +446,7 @@ if [[ -n $DISCORD_WEBHOOK ]]; then
       "content":null,
       "embeds":[
          {
-            "title":" 🚀 Les conteneurs ou packages mis à jour !",
+            "title":" 🚀 Les packages mis à jour !",
             "color":5832543,
             "fields":[
                {
