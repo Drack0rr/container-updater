@@ -418,7 +418,7 @@ if [[ -n $DISCORD_WEBHOOK ]]; then
       "content":null,
       "embeds":[
          {
-            "title":" 🚀 Les conteneurs ou packages sont mis à jour automatiquement !",
+            "title":" 🚀 Les conteneurs ou packages mis à jour !",
             "color":5832543,
             "fields":[
                {
@@ -452,7 +452,7 @@ if [[ -n $DISCORD_WEBHOOK ]]; then
       "content":null,
       "embeds":[
          {
-            "title":" 🚀 Les conteneurs ou packages sont mis à jour automatiquement !",
+            "title":" 🚀 Les packages mis à jour !",
             "color":5832543,
             "fields":[
                {
