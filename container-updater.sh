@@ -120,14 +120,6 @@ if [[ -z "$PAQUET_UPDATE" ]]; then
    echo " ✅  Le système est à jour."
 fi
 
-# Vérifie que docker est en cours d'exécution
-DOCKER_INFO_OUTPUT=$(docker info 2> /dev/null | grep "Containers:" | awk '{print $1}')
-
-if [ "$DOCKER_INFO_OUTPUT" != "Containers:" ]
-  then
-    exit 1
-fi
-
 # vérifiez si la première partie du nom de l'image contient un point, alors il s'agit d'un domaine de registre et non de hub.docker.com
 Check-Image-Uptdate () {
    IMAGE_ABSOLUTE=$1
@@ -210,77 +202,88 @@ Compare-Digest () {
       echo "OK"
    fi
 }
-CONTAINERS_NB=0
-CONTAINERS_NB_U=0
-for CONTAINER in $(docker ps --format {{.Names}}); do
-    AUTOUPDATE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate"')
-    if [ "$AUTOUPDATE" == "true" ]; then
-        IMAGE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Image')
-        Check-Image-Uptdate $IMAGE
-        Check-Local-Digest
-        Check-Remote-Digest
-        if [[ -z $RESPONSE_ERRORS ]]; then
-         RESULT=$(Compare-Digest)
-            if [ "$RESULT" == "UPDATE" ]; then
-               echo " 🚸 [$IMAGE_LOCAL] Mise à jour disponible !"
-               echo " 🚀 [$IMAGE_LOCAL] Lance la mise à jour automatique !"
-               DOCKER_COMPOSE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.docker-compose"')
-               if [[ "$DOCKER_COMPOSE" != "null" ]]; then 
-                  docker pull $IMAGE_LOCAL && docker-compose -f $DOCKER_COMPOSE up -d --force-recreate
-                  echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
+
+# Vérifie que docker est en cours d'exécution
+DOCKER_INFO_OUTPUT=$(docker info 2> /dev/null | grep "Containers:" | awk '{print $1}')
+
+if [ "$DOCKER_INFO_OUTPUT" = "Containers:" ]
+  then
+   CONTAINERS_NB=0
+   CONTAINERS_NB_U=0
+   for CONTAINER in $(docker ps --format {{.Names}}); do
+      AUTOUPDATE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate"')
+      if [ "$AUTOUPDATE" == "true" ]; then
+         IMAGE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Image')
+         Check-Image-Uptdate $IMAGE
+         Check-Local-Digest
+         Check-Remote-Digest
+         if [[ -z $RESPONSE_ERRORS ]]; then
+            RESULT=$(Compare-Digest)
+               if [ "$RESULT" == "UPDATE" ]; then
+                  echo " 🚸 [$IMAGE_LOCAL] Mise à jour disponible !"
+                  echo " 🚀 [$IMAGE_LOCAL] Lance la mise à jour automatique !"
+                  DOCKER_COMPOSE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.docker-compose"')
+                  if [[ "$DOCKER_COMPOSE" != "null" ]]; then 
+                     docker pull $IMAGE_LOCAL && docker-compose -f $DOCKER_COMPOSE up -d --force-recreate
+                     echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
+                  fi
+                  PORTAINER_WEBHOOK=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.webhook"')
+                  if [[ "$PORTAINER_WEBHOOK" != "null" ]]; then 
+                     curl -X POST $PORTAINER_WEBHOOK
+                     echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
+                  fi
+                  DOCKER_RUN=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.docker-run"')
+                  if [[ "$DOCKER_RUN" != "null" ]]; then 
+                     COMMAND=$(docker inspect --format "$(curl -s https://gist.githubusercontent.com/efrecon/8ce9c75d518b6eb863f667442d7bc679/raw/run.tpl > /dev/null)" $CONTAINER)
+                     docker stop $CONTAINER > /dev/null && docker rm $CONTAINER > /dev/null && docker pull $IMAGE_LOCAL > /dev/null && eval "$COMMAND" > /dev/null
+                     echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
+                  fi
+                  ((CONTAINERS_NB_U++))
+                  UPDATED=$(echo -E "$UPDATED🐳$CONTAINER\n")
+                  UPDATED_Z=$(echo "$UPDATED $CONTAINER")
+               else
+                  echo " ✅ [$IMAGE_LOCAL] est à jour."
                fi
-               PORTAINER_WEBHOOK=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.webhook"')
-               if [[ "$PORTAINER_WEBHOOK" != "null" ]]; then 
-                  curl -X POST $PORTAINER_WEBHOOK
-                  echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
-               fi
-               DOCKER_RUN=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.docker-run"')
-               if [[ "$DOCKER_RUN" != "null" ]]; then 
-                  COMMAND=$(docker inspect --format "$(curl -s https://gist.githubusercontent.com/efrecon/8ce9c75d518b6eb863f667442d7bc679/raw/run.tpl > /dev/null)" $CONTAINER)
-                  docker stop $CONTAINER > /dev/null && docker rm $CONTAINER > /dev/null && docker pull $IMAGE_LOCAL > /dev/null && eval "$COMMAND" > /dev/null
-                  echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
-               fi
-               ((CONTAINERS_NB_U++))
-               UPDATED=$(echo -E "$UPDATED🐳$CONTAINER\n")
-               UPDATED_Z=$(echo "$UPDATED $CONTAINER")
             else
-               echo " ✅ [$IMAGE_LOCAL] est à jour."
+               ERROR_C=$(echo -E "$ERROR_C$IMAGE\n")
+               ERROR_M=$(echo -E "$ERROR_M$RESPONSE_ERRORS\n")
             fi
-         else
-            ERROR_C=$(echo -E "$ERROR_C$IMAGE\n")
-            ERROR_M=$(echo -E "$ERROR_M$RESPONSE_ERRORS\n")
-         fi
-    fi
-    if [ "$AUTOUPDATE" == "monitor" ]; then
-        IMAGE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Image')
-        Check-Image-Uptdate $IMAGE
-        Check-Local-Digest
-        Check-Remote-Digest
-        if [[ -z $RESPONSE_ERRORS ]]; then
-         RESULT=$(Compare-Digest)
-            if [ "$RESULT" == "UPDATE" ]; then
-               echo " 🚸 [$IMAGE_LOCAL] Mise à jour disponible !"
-               UPDATE=$(echo -E "$UPDATE$IMAGE\n")
-               CONTAINERS=$(echo -E "$CONTAINERS$CONTAINER\n")
-               CONTAINERS_Z=$(echo "$CONTAINERS $CONTAINER")
-               ((CONTAINERS_NB++))
+      fi
+      if [ "$AUTOUPDATE" == "monitor" ]; then
+         IMAGE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Image')
+         Check-Image-Uptdate $IMAGE
+         Check-Local-Digest
+         Check-Remote-Digest
+         if [[ -z $RESPONSE_ERRORS ]]; then
+            RESULT=$(Compare-Digest)
+               if [ "$RESULT" == "UPDATE" ]; then
+                  echo " 🚸 [$IMAGE_LOCAL] Mise à jour disponible !"
+                  UPDATE=$(echo -E "$UPDATE$IMAGE\n")
+                  CONTAINERS=$(echo -E "$CONTAINERS$CONTAINER\n")
+                  CONTAINERS_Z=$(echo "$CONTAINERS $CONTAINER")
+                  ((CONTAINERS_NB++))
+               else
+                  echo " ✅ [$IMAGE_LOCAL] est à jour."
+               fi
             else
-               echo " ✅ [$IMAGE_LOCAL] est à jour."
+               ERROR_C=$(echo -E "$ERROR_C$IMAGE\n")
+               ERROR_M=$(echo -E "$ERROR_M$RESPONSE_ERRORS\n")
             fi
-         else
-            ERROR_C=$(echo -E "$ERROR_C$IMAGE\n")
-            ERROR_M=$(echo -E "$ERROR_M$RESPONSE_ERRORS\n")
-         fi
-    fi
-done
+      fi
+   done
+   echo ""
+   docker image prune -f
+fi
+
+
+
 if [[ -n $ZABBIX_SRV ]]; then
    Send-Zabbix-Data "update.container_to_update_nb" $CONTAINERS_NB
    Send-Zabbix-Data "update.container_to_update_names" $CONTAINERS_Z
    Send-Zabbix-Data "update.container_updated_nb" $CONTAINERS_NB_U
    Send-Zabbix-Data "update.container_updated_names" $UPDATED_Z
 fi
-echo ""
-docker image prune -f
+
 if [[ -n $DISCORD_WEBHOOK ]]; then
    if [[ ! -z "$ERROR_C" ]]; then
       curl  -H "Content-Type: application/json" \
