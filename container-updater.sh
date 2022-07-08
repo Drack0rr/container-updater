@@ -49,7 +49,7 @@ Send-Zabbix-Data () {
 
 # Vérifie si votre distribution est bien une RHEL et si vous êtes en root.
 if [ "$EUID" -ne 0 ]
-  then echo " ❌ Veuillez exécuter en tant que root"
+  then echo " ❌  Veuillez exécuter en tant que root"
   exit 1
 fi
 
@@ -64,19 +64,19 @@ if [ -x "$(command -v dnf)" ]; then
 
    while read line ; do 
       PAQUET=$(echo $line | cut -d " " -f 1)
-      echo "  🚸 Mise à jour disponible: $PAQUET"
+      echo "  🚸  Mise à jour disponible: $PAQUET"
       if [[ "$BLACKLIST" == *"$PAQUET"* ]]; then
          PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
          ((PAQUET_NB++))
       else
-         echo " 🚀 [$PAQUET] Lance la mise à jour !"
+         echo " 🚀  [$PAQUET] Lance la mise à jour !"
          dnf update $PAQUET -y > /dev/null 2> /dev/null
          status=$?
          if test $status -eq 0; then
-            echo " 🔆 [$PAQUET] Mise à jour réussie !"
+            echo " 🔆  [$PAQUET] Mise à jour réussie !"
             UPDATED=$(echo -E "$UPDATED📦$PAQUET\n")
          else
-            echo " ❌ [$PAQUET] Mise à jour a échoué !"
+            echo " ❌  [$PAQUET] Mise à jour a échoué !"
             PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
          fi
       fi
@@ -89,19 +89,19 @@ elif [ -x "$(command -v apt-get)" ]; then
    apt list --upgradable 2> /dev/null | tail -n +2 >> temp
    while read line ; do 
       PAQUET=$(echo $line | cut -d / -f 1)
-      echo "  🚸 Mise à jour disponible: $PAQUET"
+      echo "  🚸  Mise à jour disponible: $PAQUET"
       if [[ "$BLACKLIST" == *"$PAQUET"* ]]; then
          PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
          ((PAQUET_NB++))
       else
-         echo " 🚀 [$PAQUET] Lance la mise à jour !"
+         echo " 🚀  [$PAQUET] Lance la mise à jour !"
          apt-get --only-upgrade install $PAQUET -y > /dev/null 2> /dev/null
          status=$?
          if test $status -eq 0; then
-            echo " 🔆 [$PAQUET] Mise à jour réussie !"
+            echo " 🔆  [$PAQUET] Mise à jour réussie !"
             UPDATED=$(echo -E "$UPDATED📦$PAQUET\n")
          else
-            echo " ❌ [$PAQUET] Mise à jour a échoué !"
+            echo " ❌  [$PAQUET] Mise à jour a échoué !"
             PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
          fi
       fi
@@ -117,7 +117,7 @@ if [[ -n $ZABBIX_SRV ]]; then
 fi
 
 if [[ -z "$PAQUET_UPDATE" ]]; then
-   echo " ✅ Le système est à jour."
+   echo " ✅  Le système est à jour."
 fi
 
 # Vérifie que docker est en cours d'exécution
@@ -164,7 +164,7 @@ Check-Local-Digest () {
    if [ -z "${DIGEST_LOCAL}" ] ; then
       echo "Local digest: introuvable" 1>&2
       echo "Pour des raisons de sécurité, ce script n'autorise que les mises à jour des images déjà extraites." 1>&2
-      echo " ❌ Erreur sur l'image : $IMAGE_LOCAL"
+      echo " ❌  Erreur sur l'image : $IMAGE_LOCAL"
       exit 1
    fi
    #echo "Local digest:  ${DIGEST_LOCAL}"
@@ -180,7 +180,7 @@ Check-Remote-Digest () {
          "https://${IMAGE_REGISTRY_API}/v2/${IMAGE_PATH}/manifests/${IMAGE_TAG}")
       RESPONSE_ERRORS=$(jq -r "try .errors[].code" <<< $DIGEST_RESPONSE)
       if [[ -n $RESPONSE_ERRORS ]]; then
-         echo " ❌ [$IMAGE_LOCAL] Erreur : $(echo "$RESPONSE_ERRORS")" 1>&2
+         echo " ❌  [$IMAGE_LOCAL] Erreur : $(echo "$RESPONSE_ERRORS")" 1>&2
       fi
       DIGEST_REMOTE=$(jq -r ".config.digest" <<< $DIGEST_RESPONSE)
    elif [ "$IMAGE_REGISTRY" == "ghcr.io" ]; then
@@ -189,15 +189,15 @@ Check-Remote-Digest () {
          DIGEST_RESPONSE=$(curl -s -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.docker.distribution.manifest.v2+json" https://ghcr.io/v2/${IMAGE_PATH}/manifests/${IMAGE_TAG})
          RESPONSE_ERRORS=$(jq -r 'try .errors[].code' <<< $DIGEST_RESPONSE)
          if [[ -n $RESPONSE_ERRORS ]]; then
-            echo " ❌ [$IMAGE_LOCAL] Erreur : $(echo "$RESPONSE_ERRORS")" 1>&2
+            echo " ❌  [$IMAGE_LOCAL] Erreur : $(echo "$RESPONSE_ERRORS")" 1>&2
          fi
          DIGEST_REMOTE=$(jq -r '.config.digest' <<< $DIGEST_RESPONSE)
       else
-         echo " ❌ [$IMAGE_LOCAL] Veuillez fournir votre token d'accès personnel Github !" 1>&2
+         echo " ❌  [$IMAGE_LOCAL] Veuillez fournir votre token d'accès personnel Github !" 1>&2
          RESPONSE_ERRORS="NO-TOKEN"
       fi
    else
-      echo " ❌ [$IMAGE_LOCAL] Erreur : Impossible de vérifier ce référentiel !" 1>&2
+      echo " ❌  [$IMAGE_LOCAL] Erreur : Impossible de vérifier ce référentiel !" 1>&2
    #echo "Remote digest: ${DIGEST_REMOTE}"
    fi
 }
