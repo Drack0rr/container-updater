@@ -53,39 +53,66 @@ if [ "$EUID" -ne 0 ]
   exit 1
 fi
 if [ -x "$(command -v dnf)" ]; then
+   # Mise à jour rhel
+   dnf list --upgrades > /dev/null 2> /dev/null
+
+   PAQUET_UPDATE=""
+   PAQUET_NB=0
+   dnf list --upgrades 2> /dev/null | tail -n +3 >> temp
+
+   while read line ; do 
+      PAQUET=$(echo $line | cut -d " " -f 1)
+      echo "  🚸 Mise à jour disponible: $PAQUET"
+      if [[ "$BLACKLIST" == *"$PAQUET"* ]]; then
+         PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
+         ((PAQUET_NB++))
+      else
+         echo " 🚀 [$PAQUET] Lance la mise à jour !"
+         dnf update $PAQUET -y > /dev/null 2> /dev/null
+         status=$?
+         if test $status -eq 0; then
+            echo " 🔆 [$PAQUET] Mise à jour réussie !"
+            UPDATED=$(echo -E "$UPDATED📦$PAQUET\n")
+         else
+            echo " ❌ [$PAQUET] Mise à jour a échoué !"
+            PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
+         fi
+      fi
+   done < temp
+   rm -f temp
+    :
+elif [ -x "$(command -v apt-get)" ]; then
+   # Mise à jour debian
+   apt update > /dev/null 2> /dev/null
+
+   PAQUET_UPDATE=""
+   PAQUET_NB=0
+   apt list --upgradable 2> /dev/null | tail -n +2 >> temp
+   while read line ; do 
+      PAQUET=$(echo $line | cut -d / -f 1)
+      echo "  🚸 Mise à jour disponible: $PAQUET"
+      if [[ "$BLACKLIST" == *"$PAQUET"* ]]; then
+         PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
+         ((PAQUET_NB++))
+      else
+         echo " 🚀 [$PAQUET] Lance la mise à jour ! !"
+         apt-get --only-upgrade install $PAQUET > /dev/null 2> /dev/null
+         status=$?
+         if test $status -eq 0; then
+            echo " 🔆 [$PAQUET] Mise à jour réussie !"
+            UPDATED=$(echo -E "$UPDATED📦$PAQUET\n")
+         else
+            echo " ❌ [$PAQUET] Mise à jour a échoué !"
+            PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
+         fi
+      fi
+   done < temp
+   rm temp
     :
 else
-    echo "Ce script n'est compatible qu'avec Rhel"
+    echo "Ce script n'est pas compatible avec votre système"
     exit 1
 fi
-
-# Mise à jour rhel
-dnf list --upgrades > /dev/null 2> /dev/null
-
-PAQUET_UPDATE=""
-PAQUET_NB=0
-dnf list --upgrades 2> /dev/null | tail -n +3 >> temp
-
-while read line ; do 
-   PAQUET=$(echo $line | cut -d " " -f 1)
-   echo "  🚸 Mise à jour disponible: $PAQUET"
-   if [[ "$BLACKLIST" == *"$PAQUET"* ]]; then
-      PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
-      ((PAQUET_NB++))
-   else
-      echo " 🚀 [$PAQUET] Lance la mise à jour automatique !"
-      dnf update $PAQUET -y > /dev/null 2> /dev/null
-      status=$?
-      if test $status -eq 0; then
-         echo " 🔆 [$PAQUET] Mise à jour réussie !"
-         UPDATED=$(echo -E "$UPDATED📦$PAQUET\n")
-      else
-         echo " ❌ [$PAQUET] Mise à jour a échoué !"
-         PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
-      fi
-   fi
-done < temp
-rm -f temp
 
 if [[ -n $ZABBIX_SRV ]]; then
    Send-Zabbix-Data "update.paquets" $PAQUET_NB
