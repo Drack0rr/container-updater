@@ -139,7 +139,7 @@ Check-Local-Digest () {
    if [ -z "${DIGEST_LOCAL}" ] ; then
       echo "Local digest: introuvable" 1>&2
       echo "Pour des raisons de sécurité, ce script n'autorise que les mises à jour des images déjà extraites." 1>&2
-      echo "Erreur sur l'image : $IMAGE_LOCAL"
+      echo " ❌ Erreur sur l'image : $IMAGE_LOCAL"
       exit 1
    fi
    #echo "Local digest:  ${DIGEST_LOCAL}"
