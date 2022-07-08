@@ -92,7 +92,7 @@ if [[ -n $ZABBIX_SRV ]]; then
 fi
 
 if [[ -z "$PAQUET_UPDATE" ]]; then
-   echo " ✅   Le système est déjà à jour."
+   echo " ✅ Le système est à jour."
 fi
 
 # Vérifie que docker est en cours d'exécution
@@ -219,7 +219,7 @@ for CONTAINER in $(docker ps --format {{.Names}}); do
                UPDATED=$(echo -E "$UPDATED🐳$CONTAINER\n")
                UPDATED_Z=$(echo "$UPDATED $CONTAINER")
             else
-               echo " ✅ [$IMAGE_LOCAL] Déjà à jour."
+               echo " ✅ [$IMAGE_LOCAL] est à jour."
             fi
          else
             ERROR_C=$(echo -E "$ERROR_C$IMAGE\n")
@@ -240,7 +240,7 @@ for CONTAINER in $(docker ps --format {{.Names}}); do
                CONTAINERS_Z=$(echo "$CONTAINERS $CONTAINER")
                ((CONTAINERS_NB++))
             else
-               echo " ✅ [$IMAGE_LOCAL] Déjà à jour."
+               echo " ✅ [$IMAGE_LOCAL] est à jour."
             fi
          else
             ERROR_C=$(echo -E "$ERROR_C$IMAGE\n")
