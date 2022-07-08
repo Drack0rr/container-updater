@@ -82,7 +82,6 @@ if [ -x "$(command -v dnf)" ]; then
       fi
    done < temp
    rm -f temp
-    :
 elif [ -x "$(command -v apt-get)" ]; then
    # Mise à jour debian
    apt update > /dev/null 2> /dev/null
@@ -108,7 +107,6 @@ elif [ -x "$(command -v apt-get)" ]; then
       fi
    done < temp
    rm temp
-    :
 else
     echo "Ce script n'est pas compatible avec votre système"
     exit 1
