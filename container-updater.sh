@@ -219,7 +219,7 @@ if [ "$DOCKER_INFO_OUTPUT" = "Containers:" ]
          Check-Remote-Digest
          if [[ -z $RESPONSE_ERRORS ]]; then
             RESULT=$(Compare-Digest)
-               if [ "$RESULT" == "UPDATE" ]; then
+               if [ "$RESULT" == "METTRE À JOUR" ]; then
                   echo " 🚸 [$IMAGE_LOCAL] Mise à jour disponible !"
                   echo " 🚀 [$IMAGE_LOCAL] Lance la mise à jour automatique !"
                   DOCKER_COMPOSE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.docker-compose"')
