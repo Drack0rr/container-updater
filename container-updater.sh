@@ -224,8 +224,13 @@ if [ "$DOCKER_INFO_OUTPUT" = "Containers:" ]
                   echo " 🚀 [$IMAGE_LOCAL] Lance la mise à jour automatique !"
                   DOCKER_COMPOSE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.docker-compose"')
                   if [[ "$DOCKER_COMPOSE" != "null" ]]; then 
-                     docker pull $IMAGE_LOCAL && docker-compose -f $DOCKER_COMPOSE up -d --force-recreate
-                     echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
+                     if [ -x "$(command -v docker compose)" ]; then
+                        docker pull $IMAGE_LOCAL && docker compose -f $DOCKER_COMPOSE up -d --force-recreate
+                        echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
+                     else
+                        docker pull $IMAGE_LOCAL && docker-compose -f $DOCKER_COMPOSE up -d --force-recreate
+                        echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
+                     fi
                   fi
                   PORTAINER_WEBHOOK=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.webhook"')
                   if [[ "$PORTAINER_WEBHOOK" != "null" ]]; then 
