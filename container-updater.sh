@@ -53,6 +53,17 @@ if [ "$EUID" -ne 0 ]
   exit 1
 fi
 
+# Teste si 'docker-compose' est disponible
+if command -v docker-compose &>/dev/null; then
+    COMPOSE_COMMAND="docker-compose"
+elif command -v docker &>/dev/null && docker compose version &>/dev/null; then
+    # 'docker compose' (sans tiret) est disponible dans les versions récentes de Docker
+    COMPOSE_COMMAND="docker compose"
+else
+    echo "Ni 'docker-compose' ni 'docker compose' n'ont été trouvés sur ce système."
+    exit 1
+fi
+
 PAQUET_UPDATE=""
 PAQUET_NB=0
 
@@ -228,7 +239,7 @@ if [ "$DOCKER_INFO_OUTPUT" = "Containers:" ]
                         docker pull $IMAGE_LOCAL && docker compose -f $DOCKER_COMPOSE up -d --force-recreate
                         echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
                      else
-                        docker pull $IMAGE_LOCAL && docker-compose -f $DOCKER_COMPOSE up -d --force-recreate
+                        docker pull $IMAGE_LOCAL && $COMPOSE_COMMAND -f $DOCKER_COMPOSE up -d --force-recreate
                         echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
                      fi
                   fi
