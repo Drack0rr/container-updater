@@ -38,7 +38,7 @@ UPDATE=""
 
 # Envoyer des données à zabbix
 Send-Zabbix-Data () {
-    zabbix_sender -z "$ZABBIX_SRV" -s "$ZABBIX_HOST" -k "$1" -o "$2" > /dev/null 2> /dev/null
+    zabbix_sender -z "$ZABBIX_SRV" -s "$ZABBIX_HOST" -k "$1" -o "$2" &> /dev/null
     status=$?
     if test $status -eq 0; then
         echo " ✅   Données envoyées à Zabbix."
@@ -48,15 +48,15 @@ Send-Zabbix-Data () {
 }
 
 # Vérifie si votre distribution est bien une RHEL et si vous êtes en root.
-if [ "$EUID" -ne 0 ]
+if [ "$(id -u)" -ne 0 ]
   then echo " ❌  Veuillez exécuter en tant que root"
   exit 1
 fi
 
 # Teste si 'docker-compose' est disponible
-if command -v docker-compose &>/dev/null; then
+if type docker-compose &>/dev/null; then
     COMPOSE_COMMAND="docker-compose"
-elif command -v docker &>/dev/null && docker compose version &>/dev/null; then
+elif type docker &>/dev/null && docker compose version &>/dev/null; then
     # 'docker compose' (sans tiret) est disponible dans les versions récentes de Docker
     COMPOSE_COMMAND="docker compose"
 else
@@ -185,7 +185,13 @@ Check-Remote-Digest () {
       if [[ -n $RESPONSE_ERRORS ]]; then
          echo " ❌  [$IMAGE_LOCAL] Erreur : $(echo "$RESPONSE_ERRORS")" 1>&2
       fi
-      DIGEST_REMOTE=$(jq -r ".config.digest" <<< $DIGEST_RESPONSE)
+      #DIGEST_REMOTE=$(jq -r ".config.digest" <<< $DIGEST_RESPONSE)
+      if [ "$(jq -r ".config.digest" <<< $DIGEST_RESPONSE)" == "null" ]; then
+         DIGEST_REMOTE=$(jq -r '.manifests[0].digest' <<< $DIGEST_RESPONSE)
+      else
+         DIGEST_REMOTE=$(jq -r ".config.digest" <<< $DIGEST_RESPONSE)
+      fi
+
    elif [ "$IMAGE_REGISTRY" == "ghcr.io" ]; then
       if [[ -n $AUTH_GITHUB ]]; then
          TOKEN=$(curl -s -u username:$AUTH_GITHUB https://ghcr.io/token\?service\=ghcr.io\&scope\=repository:${IMAGE_PATH}:pull\&client_id\=atomist | jq -r '.token')
