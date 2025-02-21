@@ -38,7 +38,7 @@ UPDATE=""
 
 # Envoyer des données à zabbix
 Send-Zabbix-Data () {
-    zabbix_sender -z "$ZABBIX_SRV" -s "$ZABBIX_HOST" -k "$1" -o "$2" &> /dev/null
+    zabbix_sender -z "$ZABBIX_SRV" -s "$ZABBIX_HOST" -k "$1" -o "$2" > /dev/null 2> /dev/null
     status=$?
     if test $status -eq 0; then
         echo " ✅   Données envoyées à Zabbix."
@@ -48,20 +48,9 @@ Send-Zabbix-Data () {
 }
 
 # Vérifie si votre distribution est bien une RHEL et si vous êtes en root.
-if [ "$(id -u)" -ne 0 ]
+if [ "$EUID" -ne 0 ]
   then echo " ❌  Veuillez exécuter en tant que root"
   exit 1
-fi
-
-# Teste si 'docker-compose' est disponible
-if type docker-compose &>/dev/null; then
-    COMPOSE_COMMAND="docker-compose"
-elif type docker &>/dev/null && docker compose version &>/dev/null; then
-    # 'docker compose' (sans tiret) est disponible dans les versions récentes de Docker
-    COMPOSE_COMMAND="docker compose"
-else
-    echo "Ni 'docker-compose' ni 'docker compose' n'ont été trouvés sur ce système."
-    exit 1
 fi
 
 PAQUET_UPDATE=""
@@ -170,7 +159,6 @@ Check-Local-Digest () {
       echo " ❌  Erreur sur l'image : $IMAGE_LOCAL"
       exit 1
    fi
-   #echo "Local digest:  ${DIGEST_LOCAL}"
 }
 
 Check-Remote-Digest () {
@@ -178,20 +166,16 @@ Check-Remote-Digest () {
       AUTH_DOMAIN_SERVICE=$(curl --head "https://${IMAGE_REGISTRY_API}/v2/" 2>&1 | grep realm | cut -f2- -d "=" | tr "," "?" | tr -d '"' | tr -d "\r")
       AUTH_SCOPE="repository:${IMAGE_PATH}:pull"
       AUTH_TOKEN=$(curl --silent "${AUTH_DOMAIN_SERVICE}&scope=${AUTH_SCOPE}&offline_token=1&client_id=shell" | jq -r '.token')
-      DIGEST_RESPONSE=$(curl --silent -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+      
+      MANIFEST=$(curl --silent -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
          -H "Authorization: Bearer ${AUTH_TOKEN}" \
          "https://${IMAGE_REGISTRY_API}/v2/${IMAGE_PATH}/manifests/${IMAGE_TAG}")
-      RESPONSE_ERRORS=$(jq -r "try .errors[].code" <<< $DIGEST_RESPONSE)
-      if [[ -n $RESPONSE_ERRORS ]]; then
-         echo " ❌  [$IMAGE_LOCAL] Erreur : $(echo "$RESPONSE_ERRORS")" 1>&2
+      
+      DIGEST_REMOTE=$(echo "$MANIFEST" | jq -r '.config.digest')
+      
+      if [ "$DIGEST_REMOTE" = "null" ] || [ -z "$DIGEST_REMOTE" ]; then
+         DIGEST_REMOTE=$(docker inspect --format='{{.Id}}' "$IMAGE_LOCAL" 2>/dev/null)
       fi
-      #DIGEST_REMOTE=$(jq -r ".config.digest" <<< $DIGEST_RESPONSE)
-      if [ "$(jq -r ".config.digest" <<< $DIGEST_RESPONSE)" == "null" ]; then
-         DIGEST_REMOTE=$(jq -r '.manifests[0].digest' <<< $DIGEST_RESPONSE)
-      else
-         DIGEST_REMOTE=$(jq -r ".config.digest" <<< $DIGEST_RESPONSE)
-      fi
-
    elif [ "$IMAGE_REGISTRY" == "ghcr.io" ]; then
       if [[ -n $AUTH_GITHUB ]]; then
          TOKEN=$(curl -s -u username:$AUTH_GITHUB https://ghcr.io/token\?service\=ghcr.io\&scope\=repository:${IMAGE_PATH}:pull\&client_id\=atomist | jq -r '.token')
@@ -207,13 +191,11 @@ Check-Remote-Digest () {
       fi
    else
       echo " ❌  [$IMAGE_LOCAL] Erreur : Impossible de vérifier ce référentiel !" 1>&2
-   #echo "Remote digest: ${DIGEST_REMOTE}"
    fi
 }
 
-
 Compare-Digest () {
-   if [ "$DIGEST_LOCAL" != "$DIGEST_REMOTE" ] ; then
+   if [ -n "$DIGEST_REMOTE" ] && [ -n "$DIGEST_LOCAL" ] && [ "$DIGEST_LOCAL" != "$DIGEST_REMOTE" ]; then
       echo "METTRE À JOUR"
    else
       echo "OK"
@@ -241,12 +223,21 @@ if [ "$DOCKER_INFO_OUTPUT" = "Containers:" ]
                   echo " 🚀 [$IMAGE_LOCAL] Lance la mise à jour automatique !"
                   DOCKER_COMPOSE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.docker-compose"')
                   if [[ "$DOCKER_COMPOSE" != "null" ]]; then 
-                     if [ -x "$(command -v docker compose)" ]; then
-                        docker pull $IMAGE_LOCAL && docker compose -f $DOCKER_COMPOSE up -d --force-recreate
-                        echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
+                     # Vérifier d'abord la nouvelle syntaxe docker compose
+                     if docker compose version >/dev/null 2>&1; then
+                        if docker pull $IMAGE_LOCAL; then
+                           docker compose -f $DOCKER_COMPOSE up -d --force-recreate
+                           echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie avec docker compose !"
+                        fi
+                     # Sinon essayer l'ancienne syntaxe docker-compose
+                     elif command -v docker-compose >/dev/null 2>&1; then
+                        if docker pull $IMAGE_LOCAL; then
+                           docker-compose -f $DOCKER_COMPOSE up -d --force-recreate
+                           echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie avec docker-compose !"
+                        fi
                      else
-                        docker pull $IMAGE_LOCAL && $COMPOSE_COMMAND -f $DOCKER_COMPOSE up -d --force-recreate
-                        echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
+                        echo " ❌ [$IMAGE_LOCAL] Erreur : ni docker compose ni docker-compose n'est disponible"
+                        continue
                      fi
                   fi
                   PORTAINER_WEBHOOK=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.webhook"')
@@ -278,7 +269,7 @@ if [ "$DOCKER_INFO_OUTPUT" = "Containers:" ]
          Check-Remote-Digest
          if [[ -z $RESPONSE_ERRORS ]]; then
             RESULT=$(Compare-Digest)
-               if [ "$RESULT" == "UPDATE" ]; then
+               if [ "$RESULT" == "METTRE À JOUR" ]; then
                   echo " 🚸 [$IMAGE_LOCAL] Mise à jour disponible !"
                   UPDATE=$(echo -E "$UPDATE$IMAGE\n")
                   CONTAINERS=$(echo -E "$CONTAINERS$CONTAINER\n")
