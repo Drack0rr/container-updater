@@ -2,7 +2,7 @@
 
 Script Bash pour détecter et appliquer des mises à jour de workloads Docker via labels (`monitor`, `docker-compose`, `Portainer`), avec notifications Discord et métriques Zabbix optionnelles.
 
-## Nouveautés (modernisation 2026)
+## Nouveautés
 
 - Script durci: `set -Eeuo pipefail`, quoting strict, gestion d'erreurs centralisée.
 - Logs structurés (`text` ou `json`) et mode `--dry-run`.
@@ -131,12 +131,6 @@ services:
     labels:
       - "autoupdate=true"
 ```
-
-## Changement important (sécurité)
-
-Le mode `autoupdate.docker-run` legacy n'exécute plus de reconstruction dynamique de commande `docker run`.
-
-Raison: ce mécanisme reposait sur des patterns à haut risque (`eval`, template distant) incompatibles avec un niveau de sécurité 2026. La migration recommandée est `autoupdate.docker-compose` ou `autoupdate.webhook`.
 
 ## Exécution en conteneur (Compose v2)
 
