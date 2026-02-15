@@ -43,7 +43,7 @@ on_error() {
 
 is_true() {
   case "${1,,}" in
-    1|true|yes|on) return 0 ;;
+    1 | true | yes | on) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -155,7 +155,7 @@ while [[ $# -gt 0 ]]; do
       fi
       exit 1
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -181,7 +181,7 @@ if [[ -n "$GHCR_TOKEN" ]]; then
   fi
 fi
 
-IFS=',' read -r -a BLACKLIST <<< "$BLACKLIST_RAW"
+IFS=',' read -r -a BLACKLIST <<<"$BLACKLIST_RAW"
 is_blacklisted() {
   local pkg="$1"
   local item
@@ -238,7 +238,7 @@ update_system_packages() {
     for package in "${candidates[@]}"; do
       if is_blacklisted "$package"; then
         PAQUET_UPDATE+="${package}"$'\n'
-        ((PAQUET_NB+=1))
+        ((PAQUET_NB += 1))
         continue
       fi
 
@@ -255,7 +255,7 @@ update_system_packages() {
       [[ -z "$package" ]] && continue
       if is_blacklisted "$package"; then
         PAQUET_UPDATE+="${package}"$'\n'
-        ((PAQUET_NB+=1))
+        ((PAQUET_NB += 1))
         continue
       fi
 
@@ -367,7 +367,7 @@ check_containers() {
     UPDATE+="${image}"$'\n'
     CONTAINERS+="${container}"$'\n'
     CONTAINERS_Z+="${container} "
-    ((CONTAINERS_NB+=1))
+    ((CONTAINERS_NB += 1))
 
     if [[ "$autoupdate" == "monitor" ]]; then
       log info "update available (monitor only)" "container=$container image=$image"
@@ -378,7 +378,7 @@ check_containers() {
       if container_update_method "$container" "$image"; then
         UPDATED+="🐳${container}"$'\n'
         UPDATED_Z+="${container} "
-        ((CONTAINERS_NB_U+=1))
+        ((CONTAINERS_NB_U += 1))
       else
         ERROR_C+="${image}"$'\n'
         ERROR_M+="UPDATE_METHOD_FAILED"$'\n'

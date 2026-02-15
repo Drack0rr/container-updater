@@ -78,11 +78,13 @@ jobs:
           output: trivy-image.sarif
 
       - name: Upload Trivy fs report
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-fs.sarif
+          category: trivy-fs
 
       - name: Upload Trivy image report
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-image.sarif
+          category: trivy-image
