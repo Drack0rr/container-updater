@@ -1,6 +1,6 @@
 # container-updater
 
-Script Bash pour détecter et appliquer des mises à jour de conteneurs Docker via labels (`monitor`, `docker-compose`, `Portainer`), avec notifications Discord et métriques Zabbix optionnelles.
+Script Bash pour détecter et appliquer des mises à jour de workloads Docker via labels (`monitor`, `docker-compose`, `Portainer`), avec notifications Discord et métriques Zabbix optionnelles.
 
 ## Nouveautés (modernisation 2026)
 
@@ -50,12 +50,29 @@ Variables principales:
 - `ZABBIX_SERVER`: serveur Zabbix.
 - `ZABBIX_HOST`: nom d'hôte envoyé à Zabbix.
 - `GHCR_USERNAME`, `GHCR_TOKEN`: auth GHCR (images privées).
+- `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`: auth Docker Hub (évite les limites anonymes).
 - `UPDATE_SYSTEM_PACKAGES`: `true|false` (apt/dnf).
 - `BLACKLIST`: liste CSV de paquets.
 - `DRY_RUN`: `true|false`.
 - `LOG_FORMAT`: `text|json`.
 
-## Labels de conteneur supportés
+## Mode d'exécution (auto-détection)
+
+Le script détecte automatiquement son mode:
+
+- `standalone`: scan des conteneurs locaux via `docker ps` (comportement historique).
+- `swarm-manager`: scan des services via `docker service ls`.
+- `swarm-worker`: aucune mise à jour Swarm, warning explicite puis sortie en succès.
+- `docker-unavailable`: skip des vérifications Docker.
+
+En mode `swarm-manager`, seul le flux Swarm est exécuté (pas de double scan `docker ps`).
+
+## Labels supportés (standalone + swarm)
+
+En Swarm, les labels sont lus avec cette priorité:
+
+1. `Spec.Labels` (labels de service `deploy.labels`)
+2. `Spec.TaskTemplate.ContainerSpec.Labels` (fallback)
 
 ### Monitoring uniquement
 
@@ -72,12 +89,47 @@ labels:
   - "autoupdate.docker-compose=/path/to/compose.yaml"
 ```
 
+Note Swarm: `autoupdate.docker-compose` est ignoré volontairement (warning dans les logs).  
+Raison: `docker compose up` n'est pas un mécanisme sûr pour mettre à jour un service Swarm.
+
 ### Mise à jour automatique via webhook Portainer
 
 ```yaml
 labels:
   - "autoupdate=true"
   - "autoupdate.webhook=https://..."
+```
+
+### Méthode par défaut en Swarm (sans webhook)
+
+Si `autoupdate=true` et qu'aucun webhook n'est défini, le script applique:
+
+```bash
+docker service update --image <repo:tag> --detach=false <service>
+```
+
+Avec `GHCR_TOKEN` configuré, `--with-registry-auth` est ajouté automatiquement.
+
+### Exemple labels Swarm au niveau service (`deploy.labels`)
+
+```yaml
+services:
+  app:
+    image: example/app:latest
+    deploy:
+      labels:
+        - "autoupdate=true"
+        - "autoupdate.webhook=https://..."
+```
+
+### Exemple fallback labels dans `TaskTemplate.ContainerSpec.Labels`
+
+```yaml
+services:
+  app:
+    image: example/app:latest
+    labels:
+      - "autoupdate=true"
 ```
 
 ## Changement important (sécurité)

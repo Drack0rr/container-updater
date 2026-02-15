@@ -27,6 +27,20 @@ jobs:
       - name: Shfmt
         run: shfmt -d -i 2 -ci container-updater.sh
 
+  behavior-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+
+      - name: Run swarm behavior tests
+        run: bash tests/test-swarm-behavior.sh
+
   docker-build:
     runs-on: ubuntu-latest
     steps:
