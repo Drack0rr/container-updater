@@ -345,8 +345,8 @@ get_local_digest_for_image() {
 
   image_repo="$(image_repo_from_ref "$image_ref")"
   image_digest="$(
-    docker image inspect "$image_ref" 2>/dev/null | \
-      jq -r --arg repo "$image_repo" '.[0].RepoDigests[]? | select(startswith($repo + "@")) | split("@")[1]' | \
+    docker image inspect "$image_ref" 2>/dev/null |
+      jq -r --arg repo "$image_repo" '.[0].RepoDigests[]? | select(startswith($repo + "@")) | split("@")[1]' |
       head -n 1 || true
   )"
   printf '%s\n' "$image_digest"
