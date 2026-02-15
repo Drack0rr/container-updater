@@ -1,0 +1,16 @@
+services:
+  container-updater:
+    build:
+      context: .
+    image: container-updater:local
+    container_name: container-updater
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      UPDATE_SYSTEM_PACKAGES: "false"
+      LOG_FORMAT: "text"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/localtime:/etc/localtime:ro
+    command: ["--no-system-update"]

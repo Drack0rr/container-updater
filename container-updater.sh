@@ -1,639 +1,467 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-BLACKLIST=""
-if [[ $1 == "-h" ]] ||  [[ $1 == "--help" ]]; then
-   echo "Un petit script bash pour les conteneurs d'alerte et de mise à jour automatique déployés avec docker-compose, ou docker run ou Portainer."
-   echo "Options disponibles :"
-   echo "  -d <discord_webhook> : Envoyer une notification à Discord"
-   echo "  -b <package,package> : Blacklist des packages pour la mise à jour automatique"
-   echo "  -g <github_access_token> : Fournissez votre token pour le registre Github"
-   echo "  -z <zabbix_server> : Envoyer des données à Zabbix"
-   echo "  -n \"<host_name>\" : Changer le nom d'hôte pour Zabbix"
-   exit
-fi
+SCRIPT_VERSION="2.0.0"
 
-while getopts ":d:b:z:n:g:" opt; do
-  case $opt in
-    d) DISCORD_WEBHOOK="$OPTARG"
-    ;;
-    b) BLACKLIST="$OPTARG"
-    ;;
-    g) AUTH_GITHUB="$OPTARG"
-    ;;
-    z) ZABBIX_SRV="$OPTARG"
-    ;;
-    n) ZABBIX_HOST="$OPTARG"
-    ;;
-    \?) echo "Option invalid -$OPTARG" >&2
-    ;;
-  esac
-done
-
-if [[ -z $ZABBIX_HOST ]]; then
-   ZABBIX_HOST=$HOSTNAME
-fi
-
-UPDATED=""
-UPDATE=""
-
-# Envoyer des données à zabbix
-Send-Zabbix-Data () {
-    zabbix_sender -z "$ZABBIX_SRV" -s "$ZABBIX_HOST" -k "$1" -o "$2" > /dev/null 2> /dev/null
-    status=$?
-    if test $status -eq 0; then
-        echo " ✅   Données envoyées à Zabbix."
-    else
-        echo " ❌   ERREUR : Un problème a été rencontré lors de l'envoi des données à Zabbix."
-    fi
-}
-
-# Vérifie si votre distribution est bien une RHEL et si vous êtes en root.
-if [ "$EUID" -ne 0 ]
-  then echo " ❌  Veuillez exécuter en tant que root"
-  exit 1
-fi
+# -----------------------------
+# Defaults (can be overridden by env or CLI)
+# -----------------------------
+DISCORD_WEBHOOK="${DISCORD_WEBHOOK:-}"
+BLACKLIST_RAW="${BLACKLIST:-}"
+GHCR_TOKEN="${GHCR_TOKEN:-${AUTH_GITHUB:-}}"
+GHCR_USERNAME="${GHCR_USERNAME:-${GITHUB_USERNAME:-oauth2}}"
+ZABBIX_SRV="${ZABBIX_SRV:-${ZABBIX_SERVER:-}}"
+ZABBIX_HOST="${ZABBIX_HOST:-${HOSTNAME:-unknown-host}}"
+UPDATE_SYSTEM_PACKAGES="${UPDATE_SYSTEM_PACKAGES:-true}"
+ALLOW_LEGACY_DOCKER_RUN="${ALLOW_LEGACY_DOCKER_RUN:-false}"
+DRY_RUN="${DRY_RUN:-false}"
+LOG_FORMAT="${LOG_FORMAT:-text}" # text|json
+DOCKER_TIMEOUT="${DOCKER_TIMEOUT:-15}"
 
 PAQUET_UPDATE=""
 PAQUET_NB=0
+UPDATED=""
+UPDATE=""
+ERROR_C=""
+ERROR_M=""
+CONTAINERS=""
+CONTAINERS_Z=""
+UPDATED_Z=""
+CONTAINERS_NB=0
+CONTAINERS_NB_U=0
 
-if [ -x "$(command -v dnf)" ]; then
-   # Mise à jour rhel
-   dnf list --upgrades > /dev/null 2> /dev/null
+# shellcheck disable=SC2034
+LEGACY_DOCKER_RUN_DISABLED_REASON="autoupdate.docker-run is disabled by default for security hardening"
 
-   dnf list --upgrades 2> /dev/null | tail -n +3 >> temp
+trap 'on_error $LINENO' ERR
 
-   while read line ; do 
-      PAQUET=$(echo $line | cut -d " " -f 1)
-      echo "  🚸  Mise à jour disponible: $PAQUET"
-      if [[ "$BLACKLIST" == *"$PAQUET"* ]]; then
-         PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
-         ((PAQUET_NB++))
-      else
-         echo " 🚀  [$PAQUET] Lance la mise à jour !"
-         dnf update $PAQUET -y > /dev/null 2> /dev/null
-         status=$?
-         if test $status -eq 0; then
-            echo " 🔆  [$PAQUET] Mise à jour réussie !"
-            UPDATED=$(echo -E "$UPDATED📦$PAQUET\n")
-         else
-            echo " ❌  [$PAQUET] Mise à jour a échoué !"
-            PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
-         fi
-      fi
-   done < temp
-   rm -f temp
-elif [ -x "$(command -v apt-get)" ]; then
-   # Mise à jour debian
-   apt update -y > /dev/null 2> /dev/null
-
-   apt list --upgradable 2> /dev/null | tail -n +2 >> temp
-   while read line ; do 
-      PAQUET=$(echo $line | cut -d / -f 1)
-      echo "  🚸  Mise à jour disponible: $PAQUET"
-      if [[ "$BLACKLIST" == *"$PAQUET"* ]]; then
-         PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
-         ((PAQUET_NB++))
-      else
-         echo " 🚀  [$PAQUET] Lance la mise à jour !"
-         apt-get --only-upgrade install $PAQUET -y > /dev/null 2> /dev/null
-         status=$?
-         if test $status -eq 0; then
-            echo " 🔆  [$PAQUET] Mise à jour réussie !"
-            UPDATED=$(echo -E "$UPDATED📦$PAQUET\n")
-         else
-            echo " ❌  [$PAQUET] Mise à jour a échoué !"
-            PAQUET_UPDATE=$(echo -E "$PAQUET_UPDATE$PAQUET\n")
-         fi
-      fi
-   done < temp
-   rm temp
-else
-    echo "Ce script n'est pas compatible avec votre système"
-    exit 1
-fi
-
-if [[ -n $ZABBIX_SRV ]]; then
-   Send-Zabbix-Data "update.paquets" $PAQUET_NB
-fi
-
-if [[ -z "$PAQUET_UPDATE" ]]; then
-   echo " ✅  Le système est à jour."
-fi
-
-# vérifiez si la première partie du nom de l'image contient un point, alors il s'agit d'un domaine de registre et non de hub.docker.com
-Check-Image-Uptdate () {
-   IMAGE_ABSOLUTE=$1
-   if [[ $(echo $IMAGE_ABSOLUTE | cut -d : -f 1 | cut -d / -f 1) == *"."* ]] ; then
-      IMAGE_REGISTRY=$(echo $IMAGE_ABSOLUTE | cut -d / -f 1)
-      IMAGE_REGISTRY_API=$IMAGE_REGISTRY
-      IMAGE_PATH_FULL=$(echo $IMAGE_ABSOLUTE | cut -d / -f 2-)
-   elif [[ $(echo $IMAGE_ABSOLUTE | awk -F"/" '{print NF-1}') == 0 ]] ; then
-      IMAGE_REGISTRY="docker.io"
-      IMAGE_REGISTRY_API="registry-1.docker.io"
-      IMAGE_PATH_FULL=library/$IMAGE_ABSOLUTE
-   else
-      IMAGE_REGISTRY="docker.io"
-      IMAGE_REGISTRY_API="registry-1.docker.io"
-      IMAGE_PATH_FULL=$IMAGE_ABSOLUTE
-   fi
-
-   # Détecter la balise d'image
-   if [[ "$IMAGE_PATH_FULL" == *":"* ]] ; then
-      IMAGE_PATH=$(echo $IMAGE_PATH_FULL | cut -d : -f 1)
-      IMAGE_TAG=$(echo $IMAGE_PATH_FULL | cut -d : -f 2)
-      IMAGE_LOCAL="$IMAGE_ABSOLUTE"
-   else
-      IMAGE_PATH=$IMAGE_PATH_FULL
-      IMAGE_TAG="latest"
-      IMAGE_LOCAL="$IMAGE_ABSOLUTE:latest"
-   fi
-   # printing full image information
-   #echo "Checking for available update for $IMAGE_REGISTRY/$IMAGE_PATH:$IMAGE_TAG..."
+on_error() {
+  local line="$1"
+  log error "unexpected failure" "line=${line}"
+  exit 1
 }
 
-Check-Local-Digest () {
-   DIGEST_LOCAL=$(docker images -q --no-trunc $IMAGE_LOCAL)
-   if [ -z "${DIGEST_LOCAL}" ] ; then
-      echo "Local digest: introuvable" 1>&2
-      echo "Pour des raisons de sécurité, ce script n'autorise que les mises à jour des images déjà extraites." 1>&2
-      echo " ❌  Erreur sur l'image : $IMAGE_LOCAL"
+is_true() {
+  case "${1,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+log() {
+  local level="$1"
+  local message="$2"
+  local extra="${3:-}"
+  local ts
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  if [[ "$LOG_FORMAT" == "json" ]]; then
+    jq -cn --arg ts "$ts" --arg level "$level" --arg msg "$message" --arg extra "$extra" \
+      '{timestamp:$ts, level:$level, message:$msg, extra:$extra}'
+  else
+    if [[ -n "$extra" ]]; then
+      printf '%s [%s] %s (%s)\n' "$ts" "${level^^}" "$message" "$extra"
+    else
+      printf '%s [%s] %s\n' "$ts" "${level^^}" "$message"
+    fi
+  fi
+}
+
+usage() {
+  cat <<'USAGE'
+Container Updater v2
+
+Usage:
+  ./container-updater.sh [options]
+
+Options:
+  -d <discord_webhook>       Discord webhook URL
+  -b <pkg1,pkg2>             Package blacklist (exact package names)
+  -g <ghcr_token>            GHCR token (deprecated: prefer GHCR_TOKEN env)
+  -u <ghcr_username>         GHCR username (default: oauth2)
+  -z <zabbix_server>         Zabbix server
+  -n <host_name>             Zabbix host name override
+  --dry-run                  Do not perform mutating actions
+  --no-system-update         Disable apt/dnf package update step
+  --healthcheck              Validate runtime dependencies and exit
+  -h, --help                 Show help
+
+Environment variables:
+  DISCORD_WEBHOOK, BLACKLIST, GHCR_TOKEN, GHCR_USERNAME,
+  ZABBIX_SERVER, ZABBIX_HOST, UPDATE_SYSTEM_PACKAGES,
+  ALLOW_LEGACY_DOCKER_RUN, DRY_RUN, LOG_FORMAT, DOCKER_TIMEOUT
+USAGE
+}
+
+healthcheck() {
+  local missing=0
+  for bin in bash docker jq curl; do
+    if ! command -v "$bin" >/dev/null 2>&1; then
+      log error "missing binary" "binary=$bin"
+      missing=1
+    fi
+  done
+
+  if [[ -n "$ZABBIX_SRV" ]] && ! command -v zabbix_sender >/dev/null 2>&1; then
+    log error "zabbix_sender required when ZABBIX_SERVER is configured"
+    missing=1
+  fi
+
+  if [[ "$missing" -eq 0 ]]; then
+    log info "healthcheck ok"
+    return 0
+  fi
+  return 1
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -d)
+      DISCORD_WEBHOOK="${2:-}"
+      shift 2
+      ;;
+    -b)
+      BLACKLIST_RAW="${2:-}"
+      shift 2
+      ;;
+    -g)
+      GHCR_TOKEN="${2:-}"
+      log warn "-g is deprecated; prefer GHCR_TOKEN env to avoid shell history leaks"
+      shift 2
+      ;;
+    -u)
+      GHCR_USERNAME="${2:-}"
+      shift 2
+      ;;
+    -z)
+      ZABBIX_SRV="${2:-}"
+      shift 2
+      ;;
+    -n)
+      ZABBIX_HOST="${2:-}"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN="true"
+      shift
+      ;;
+    --no-system-update)
+      UPDATE_SYSTEM_PACKAGES="false"
+      shift
+      ;;
+    --healthcheck)
+      if healthcheck; then
+        exit 0
+      fi
       exit 1
-   fi
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      log error "unknown option" "$1"
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+if ! healthcheck; then
+  exit 1
+fi
+
+if [[ -n "$GHCR_TOKEN" ]]; then
+  if is_true "$DRY_RUN"; then
+    log info "dry-run: skip ghcr login"
+  else
+    printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin >/dev/null 2>&1 || {
+      log warn "ghcr login failed" "username=$GHCR_USERNAME"
+    }
+  fi
+fi
+
+IFS=',' read -r -a BLACKLIST <<< "$BLACKLIST_RAW"
+is_blacklisted() {
+  local pkg="$1"
+  local item
+  for item in "${BLACKLIST[@]}"; do
+    [[ "$pkg" == "$item" ]] && return 0
+  done
+  return 1
 }
 
-Check-Remote-Digest () {
-   if [ "$IMAGE_REGISTRY" == "docker.io" ]; then
-      AUTH_DOMAIN_SERVICE=$(curl --head "https://${IMAGE_REGISTRY_API}/v2/" 2>&1 | grep realm | cut -f2- -d "=" | tr "," "?" | tr -d '"' | tr -d "\r")
-      AUTH_SCOPE="repository:${IMAGE_PATH}:pull"
-      AUTH_TOKEN=$(curl --silent "${AUTH_DOMAIN_SERVICE}&scope=${AUTH_SCOPE}&offline_token=1&client_id=shell" | jq -r '.token')
-      
-      MANIFEST=$(curl --silent -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-         -H "Authorization: Bearer ${AUTH_TOKEN}" \
-         "https://${IMAGE_REGISTRY_API}/v2/${IMAGE_PATH}/manifests/${IMAGE_TAG}")
-      
-      DIGEST_REMOTE=$(echo "$MANIFEST" | jq -r '.config.digest')
-      
-      if [ "$DIGEST_REMOTE" = "null" ] || [ -z "$DIGEST_REMOTE" ]; then
-         DIGEST_REMOTE=$(docker inspect --format='{{.Id}}' "$IMAGE_LOCAL" 2>/dev/null)
+send_zabbix_data() {
+  local key="$1"
+  local value="$2"
+
+  if [[ -z "$ZABBIX_SRV" ]]; then
+    return 0
+  fi
+
+  if ! command -v zabbix_sender >/dev/null 2>&1; then
+    log warn "zabbix_sender not installed; skip metric" "key=$key"
+    return 0
+  fi
+
+  if zabbix_sender -z "$ZABBIX_SRV" -s "$ZABBIX_HOST" -k "$key" -o "$value" >/dev/null 2>&1; then
+    log info "zabbix metric sent" "key=$key"
+  else
+    log warn "zabbix metric send failed" "key=$key"
+  fi
+}
+
+maybe_run() {
+  if is_true "$DRY_RUN"; then
+    log info "dry-run" "$*"
+    return 0
+  fi
+  "$@"
+}
+
+update_system_packages() {
+  if ! is_true "$UPDATE_SYSTEM_PACKAGES"; then
+    log info "system package update disabled"
+    return 0
+  fi
+
+  if [[ "$EUID" -ne 0 ]]; then
+    log warn "system package update skipped: requires root"
+    return 0
+  fi
+
+  local package
+  local candidates=()
+
+  if command -v dnf >/dev/null 2>&1; then
+    mapfile -t candidates < <(dnf -q check-update 2>/dev/null | awk 'NR>2 {print $1}' | sed '/^$/d')
+    for package in "${candidates[@]}"; do
+      if is_blacklisted "$package"; then
+        PAQUET_UPDATE+="${package}"$'\n'
+        ((PAQUET_NB+=1))
+        continue
       fi
-   elif [ "$IMAGE_REGISTRY" == "ghcr.io" ]; then
-      if [[ -n $AUTH_GITHUB ]]; then
-         TOKEN=$(curl -s -u username:$AUTH_GITHUB https://ghcr.io/token\?service\=ghcr.io\&scope\=repository:${IMAGE_PATH}:pull\&client_id\=atomist | jq -r '.token')
-         DIGEST_RESPONSE=$(curl -s -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.docker.distribution.manifest.v2+json" https://ghcr.io/v2/${IMAGE_PATH}/manifests/${IMAGE_TAG})
-         RESPONSE_ERRORS=$(jq -r 'try .errors[].code' <<< $DIGEST_RESPONSE)
-         if [[ -n $RESPONSE_ERRORS ]]; then
-            echo " ❌  [$IMAGE_LOCAL] Erreur : $(echo "$RESPONSE_ERRORS")" 1>&2
-         fi
-         DIGEST_REMOTE=$(jq -r '.config.digest' <<< $DIGEST_RESPONSE)
+
+      if maybe_run dnf -y upgrade "$package" >/dev/null 2>&1; then
+        UPDATED+="📦${package}"$'\n'
       else
-         echo " ❌  [$IMAGE_LOCAL] Veuillez fournir votre token d'accès personnel Github !" 1>&2
-         RESPONSE_ERRORS="NO-TOKEN"
+        PAQUET_UPDATE+="${package}"$'\n'
       fi
-   else
-      echo " ❌  [$IMAGE_LOCAL] Erreur : Impossible de vérifier ce référentiel !" 1>&2
-   fi
+    done
+  elif command -v apt-get >/dev/null 2>&1; then
+    maybe_run apt-get update -y >/dev/null 2>&1 || true
+    mapfile -t candidates < <(apt list --upgradable 2>/dev/null | tail -n +2 | cut -d/ -f1)
+    for package in "${candidates[@]}"; do
+      [[ -z "$package" ]] && continue
+      if is_blacklisted "$package"; then
+        PAQUET_UPDATE+="${package}"$'\n'
+        ((PAQUET_NB+=1))
+        continue
+      fi
+
+      if maybe_run apt-get --only-upgrade install -y "$package" >/dev/null 2>&1; then
+        UPDATED+="📦${package}"$'\n'
+      else
+        PAQUET_UPDATE+="${package}"$'\n'
+      fi
+    done
+  else
+    log warn "no supported package manager found (dnf/apt-get)"
+  fi
+
+  send_zabbix_data "update.paquets" "$PAQUET_NB"
 }
 
-Compare-Digest () {
-   if [ -n "$DIGEST_REMOTE" ] && [ -n "$DIGEST_LOCAL" ] && [ "$DIGEST_LOCAL" != "$DIGEST_REMOTE" ]; then
-      echo "METTRE À JOUR"
-   else
-      echo "OK"
-   fi
+container_update_method() {
+  local container="$1"
+  local image="$2"
+
+  local docker_compose_file
+  docker_compose_file="$(docker container inspect "$container" | jq -r '.[0].Config.Labels["autoupdate.docker-compose"] // empty')"
+  if [[ -n "$docker_compose_file" ]]; then
+    if maybe_run docker pull "$image" >/dev/null 2>&1; then
+      if docker compose version >/dev/null 2>&1; then
+        if maybe_run docker compose -f "$docker_compose_file" up -d --force-recreate; then
+          return 0
+        fi
+        log error "compose update failed" "container=$container compose_file=$docker_compose_file"
+        return 1
+      elif command -v docker-compose >/dev/null 2>&1; then
+        if maybe_run docker-compose -f "$docker_compose_file" up -d --force-recreate; then
+          return 0
+        fi
+        log error "docker-compose update failed" "container=$container compose_file=$docker_compose_file"
+        return 1
+      else
+        log error "no compose binary found" "container=$container"
+        return 1
+      fi
+    fi
+    return 1
+  fi
+
+  local portainer_webhook
+  portainer_webhook="$(docker container inspect "$container" | jq -r '.[0].Config.Labels["autoupdate.webhook"] // empty')"
+  if [[ -n "$portainer_webhook" ]]; then
+    if is_true "$DRY_RUN"; then
+      log info "dry-run: skip portainer webhook" "container=$container"
+    else
+      curl -sS -m "$DOCKER_TIMEOUT" -X POST "$portainer_webhook" >/dev/null
+    fi
+    return 0
+  fi
+
+  local docker_run
+  docker_run="$(docker container inspect "$container" | jq -r '.[0].Config.Labels["autoupdate.docker-run"] // empty')"
+  if [[ -n "$docker_run" ]]; then
+    if is_true "$ALLOW_LEGACY_DOCKER_RUN"; then
+      log warn "legacy docker-run mode requested but intentionally unsupported in v2 for security"
+    else
+      log warn "legacy docker-run mode skipped" "container=$container"
+    fi
+    return 1
+  fi
+
+  log warn "no update method label found" "container=$container"
+  return 1
 }
 
-# Vérifie que docker est en cours d'exécution
-DOCKER_INFO_OUTPUT=$(docker info 2> /dev/null | grep "Containers:" | awk '{print $1}')
+check_containers() {
+  if ! docker info >/dev/null 2>&1; then
+    log warn "docker daemon not reachable; skip container checks"
+    return 0
+  fi
 
-if [ "$DOCKER_INFO_OUTPUT" = "Containers:" ]
-  then
-   CONTAINERS_NB=0
-   CONTAINERS_NB_U=0
-   for CONTAINER in $(docker ps --format {{.Names}}); do
-      AUTOUPDATE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate"')
-      if [ "$AUTOUPDATE" == "true" ]; then
-         IMAGE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Image')
-         Check-Image-Uptdate $IMAGE
-         Check-Local-Digest
-         Check-Remote-Digest
-         if [[ -z $RESPONSE_ERRORS ]]; then
-            RESULT=$(Compare-Digest)
-               if [ "$RESULT" == "METTRE À JOUR" ]; then
-                  echo " 🚸 [$IMAGE_LOCAL] Mise à jour disponible !"
-                  echo " 🚀 [$IMAGE_LOCAL] Lance la mise à jour automatique !"
-                  DOCKER_COMPOSE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.docker-compose"')
-                  if [[ "$DOCKER_COMPOSE" != "null" ]]; then 
-                     # Vérifier d'abord la nouvelle syntaxe docker compose
-                     if docker compose version >/dev/null 2>&1; then
-                        if docker pull $IMAGE_LOCAL; then
-                           docker compose -f $DOCKER_COMPOSE up -d --force-recreate
-                           echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie avec docker compose !"
-                        fi
-                     # Sinon essayer l'ancienne syntaxe docker-compose
-                     elif command -v docker-compose >/dev/null 2>&1; then
-                        if docker pull $IMAGE_LOCAL; then
-                           docker-compose -f $DOCKER_COMPOSE up -d --force-recreate
-                           echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie avec docker-compose !"
-                        fi
-                     else
-                        echo " ❌ [$IMAGE_LOCAL] Erreur : ni docker compose ni docker-compose n'est disponible"
-                        continue
-                     fi
-                  fi
-                  PORTAINER_WEBHOOK=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.webhook"')
-                  if [[ "$PORTAINER_WEBHOOK" != "null" ]]; then 
-                     curl -X POST $PORTAINER_WEBHOOK
-                     echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
-                  fi
-                  DOCKER_RUN=$(docker container inspect $CONTAINER | jq -r '.[].Config.Labels."autoupdate.docker-run"')
-                  if [[ "$DOCKER_RUN" != "null" ]]; then 
-                     COMMAND=$(docker inspect --format "$(curl -s https://gist.githubusercontent.com/efrecon/8ce9c75d518b6eb863f667442d7bc679/raw/run.tpl > /dev/null)" $CONTAINER)
-                     docker stop $CONTAINER > /dev/null && docker rm $CONTAINER > /dev/null && docker pull $IMAGE_LOCAL > /dev/null && eval "$COMMAND" > /dev/null
-                     echo " 🔆 [$IMAGE_LOCAL] Mise à jour réussie !"
-                  fi
-                  ((CONTAINERS_NB_U++))
-                  UPDATED=$(echo -E "$UPDATED🐳$CONTAINER\n")
-                  UPDATED_Z=$(echo "$UPDATED $CONTAINER")
-               else
-                  echo " ✅ [$IMAGE_LOCAL] est à jour."
-               fi
-            else
-               ERROR_C=$(echo -E "$ERROR_C$IMAGE\n")
-               ERROR_M=$(echo -E "$ERROR_M$RESPONSE_ERRORS\n")
-            fi
+  local container
+  local autoupdate
+  local image
+  local before_id
+  local after_id
+
+  mapfile -t containers < <(docker ps --format '{{.Names}}')
+
+  for container in "${containers[@]}"; do
+    autoupdate="$(docker container inspect "$container" | jq -r '.[0].Config.Labels["autoupdate"] // empty')"
+    [[ -z "$autoupdate" ]] && continue
+
+    image="$(docker container inspect "$container" | jq -r '.[0].Config.Image')"
+    before_id="$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null || true)"
+    if [[ -z "$before_id" ]]; then
+      ERROR_C+="${image}"$'\n'
+      ERROR_M+="LOCAL_IMAGE_NOT_FOUND"$'\n'
+      continue
+    fi
+
+    if ! maybe_run docker pull "$image" >/dev/null 2>&1; then
+      ERROR_C+="${image}"$'\n'
+      ERROR_M+="PULL_FAILED"$'\n'
+      continue
+    fi
+
+    after_id="$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null || true)"
+    if [[ "$before_id" == "$after_id" ]]; then
+      log info "container image up-to-date" "container=$container image=$image"
+      continue
+    fi
+
+    UPDATE+="${image}"$'\n'
+    CONTAINERS+="${container}"$'\n'
+    CONTAINERS_Z+="${container} "
+    ((CONTAINERS_NB+=1))
+
+    if [[ "$autoupdate" == "monitor" ]]; then
+      log info "update available (monitor only)" "container=$container image=$image"
+      continue
+    fi
+
+    if [[ "$autoupdate" == "true" ]]; then
+      if container_update_method "$container" "$image"; then
+        UPDATED+="🐳${container}"$'\n'
+        UPDATED_Z+="${container} "
+        ((CONTAINERS_NB_U+=1))
+      else
+        ERROR_C+="${image}"$'\n'
+        ERROR_M+="UPDATE_METHOD_FAILED"$'\n'
       fi
-      if [ "$AUTOUPDATE" == "monitor" ]; then
-         IMAGE=$(docker container inspect $CONTAINER | jq -r '.[].Config.Image')
-         Check-Image-Uptdate $IMAGE
-         Check-Local-Digest
-         Check-Remote-Digest
-         if [[ -z $RESPONSE_ERRORS ]]; then
-            RESULT=$(Compare-Digest)
-               if [ "$RESULT" == "METTRE À JOUR" ]; then
-                  echo " 🚸 [$IMAGE_LOCAL] Mise à jour disponible !"
-                  UPDATE=$(echo -E "$UPDATE$IMAGE\n")
-                  CONTAINERS=$(echo -E "$CONTAINERS$CONTAINER\n")
-                  CONTAINERS_Z=$(echo "$CONTAINERS $CONTAINER")
-                  ((CONTAINERS_NB++))
-               else
-                  echo " ✅ [$IMAGE_LOCAL] est à jour."
-               fi
-            else
-               ERROR_C=$(echo -E "$ERROR_C$IMAGE\n")
-               ERROR_M=$(echo -E "$ERROR_M$RESPONSE_ERRORS\n")
-            fi
-      fi
-   done
-   echo ""
-   docker image prune -f
-fi
+    fi
+  done
 
+  maybe_run docker image prune -f >/dev/null 2>&1 || true
+}
 
+send_discord() {
+  if [[ -z "$DISCORD_WEBHOOK" ]]; then
+    return 0
+  fi
 
-if [[ -n $ZABBIX_SRV ]]; then
-   Send-Zabbix-Data "update.container_to_update_nb" $CONTAINERS_NB
-   Send-Zabbix-Data "update.container_to_update_names" $CONTAINERS_Z
-   Send-Zabbix-Data "update.container_updated_nb" $CONTAINERS_NB_U
-   Send-Zabbix-Data "update.container_updated_names" $UPDATED_Z
-fi
+  local title="✅ Tout est à jour"
+  local color=5832543
 
-if [[ -n $DISCORD_WEBHOOK ]]; then
-   if [[ ! -z "$ERROR_C" ]]; then
-      curl  -H "Content-Type: application/json" \
-      -d '{
-      "username":"['$HOSTNAME']",
-      "content":null,
-      "embeds":[
-         {
-            "title":" ❌ Erreur lors de la vérification de la mise à jour !",
-            "color":16734296,
-            "fields":[
-               {
-                  "name":"Images",
-                  "value":"'$ERROR_C'",
-                  "inline":true
-               },
-               {
-                  "name":"Erreurs",
-                  "value":"'$ERROR_M'",
-                  "inline":true
-               }
-            ],
-            "author":{
-               "name":"'$HOSTNAME'"
-            }
-         }
-      ],
-      "attachments":[
-         
+  if [[ -n "$ERROR_C" ]]; then
+    title="❌ Erreurs pendant la vérification"
+    color=16734296
+  elif [[ -n "$UPDATE" || -n "$PAQUET_UPDATE" ]]; then
+    title="🚸 Mises à jour disponibles"
+    color=16759896
+  elif [[ -n "$UPDATED" ]]; then
+    title="🚀 Mises à jour appliquées"
+    color=5832543
+  fi
+
+  local payload
+  payload="$(jq -cn \
+    --arg username "[$ZABBIX_HOST]" \
+    --arg title "$title" \
+    --argjson color "$color" \
+    --arg host "$ZABBIX_HOST" \
+    --arg packages "$PAQUET_UPDATE" \
+    --arg containers "$CONTAINERS" \
+    --arg images "$UPDATE" \
+    --arg updated "$UPDATED" \
+    --arg errors_img "$ERROR_C" \
+    --arg errors_msg "$ERROR_M" \
+    '{
+      username:$username,
+      content:null,
+      embeds:[
+        {
+          title:$title,
+          color:$color,
+          author:{name:$host},
+          fields:(
+            [
+              (if $packages != "" then {name:"Packages", value:$packages, inline:true} else empty end),
+              (if $containers != "" then {name:"Containers", value:$containers, inline:true} else empty end),
+              (if $images != "" then {name:"Images", value:$images, inline:true} else empty end),
+              (if $updated != "" then {name:"Updated", value:$updated, inline:false} else empty end),
+              (if $errors_img != "" then {name:"Images en erreur", value:$errors_img, inline:true} else empty end),
+              (if $errors_msg != "" then {name:"Erreurs", value:$errors_msg, inline:true} else empty end)
+            ]
+          )
+        }
       ]
-   }' \
-      $DISCORD_WEBHOOK
-   fi
+    }')"
 
-   if [[ ! -z "$UPDATED" ]] && [[ ! -z "$UPDATE" ]]; then 
-      curl  -H "Content-Type: application/json" \
-      -d '{
-      "username":"['$HOSTNAME']",
-      "content":null,
-      "embeds":[
-         {
-            "title":" 🚸 Il y a des mises à jour à faire !",
-            "color":16759896,
-            "fields":[
-               {
-                  "name":"Containers",
-                  "value":"'$CONTAINERS'",
-                  "inline":true
-               },
-               {
-                  "name":"Images",
-                  "value":"'$UPDATE'",
-                  "inline":true
-               },
-               {
-                  "name":" 🚀 Mise à jour automatique",
-                  "value":"'$UPDATED'",
-                  "inline":false
-               }
-            ],
-            "author":{
-               "name":"'$HOSTNAME'"
-            }
-         }
-      ],
-      "attachments":[
-         
-      ]
-   }' \
-      $DISCORD_WEBHOOK
-      exit
-   fi
-   if [[ ! -z "$UPDATED" ]] && [[ ! -z "$UPDATE" ]] && [[ ! -z "$PAQUET_UPDATE" ]]; then 
-      curl  -H "Content-Type: application/json" \
-      -d '{
-      "username":"['$HOSTNAME']",
-      "content":null,
-      "embeds":[
-         {
-            "title":" 🚸 Il y a des mises à jour à faire !",
-            "color":16759896,
-            "fields":[
-               {
-                  "name":"Paquets",
-                  "value":"'$PAQUET_UPDATE'",
-                  "inline":true
-               },
-               {
-                  "name":"Containers",
-                  "value":"'$CONTAINERS'",
-                  "inline":true
-               },
-               {
-                  "name":"Images",
-                  "value":"'$UPDATE'",
-                  "inline":true
-               },
-               {
-                  "name":" 🚀 Mise à jour automatique",
-                  "value":"'$UPDATED'",
-                  "inline":false
-               }
-            ],
-            "author":{
-               "name":"'$HOSTNAME'"
-            }
-         }
-      ],
-      "attachments":[
-         
-      ]
-   }' \
-      $DISCORD_WEBHOOK
-      exit
-   fi
+  if is_true "$DRY_RUN"; then
+    log info "dry-run: discord payload generated"
+    return 0
+  fi
 
-   if [[ ! -z "$UPDATED" ]] && [[ ! -z "$UPDATE" ]]; then 
-      curl  -H "Content-Type: application/json" \
-      -d '{
-      "username":"['$HOSTNAME']",
-      "content":null,
-      "embeds":[
-         {
-            "title":" 🚸 Il y a des mises à jour à faire !",
-            "color":16759896,
-            "fields":[
-               {
-                  "name":"Containers",
-                  "value":"'$CONTAINERS'",
-                  "inline":true
-               },
-               {
-                  "name":"Images",
-                  "value":"'$UPDATE'",
-                  "inline":true
-               },
-               {
-                  "name":" 🚀 Mise à jour automatique",
-                  "value":"'$UPDATED'",
-                  "inline":false
-               }
-            ],
-            "author":{
-               "name":"'$HOSTNAME'"
-            }
-         }
-      ],
-      "attachments":[
-         
-      ]
-   }' \
-      $DISCORD_WEBHOOK
-      exit
-   fi
+  curl -sS -m "$DOCKER_TIMEOUT" -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK" >/dev/null
+}
 
-   if [[ ! -z "$UPDATED" ]] && [[ ! -z "$PAQUET_UPDATE" ]]; then 
-      curl  -H "Content-Type: application/json" \
-      -d '{
-      "username":"['$HOSTNAME']",
-      "content":null,
-      "embeds":[
-         {
-            "title":" 🚀 Les packages mis à jour !",
-            "color":5832543,
-            "fields":[
-               {
-                  "name":"Paquets",
-                  "value":"'$PAQUET_UPDATE'",
-                  "inline":true
-               },
-               {
-                  "name":" 🚀 Mise à jour automatique",
-                  "value":"'$UPDATED'",
-                  "inline":false
-               }
-            ],
-            "author":{
-               "name":"'$HOSTNAME'"
-            }
-         }
-      ],
-      "attachments":[
-         
-      ]
-   }' \
-      $DISCORD_WEBHOOK
-      exit
-   fi
+main() {
+  log info "container-updater start" "version=$SCRIPT_VERSION"
+  update_system_packages
+  check_containers
 
-   if [[ ! -z "$UPDATED" ]]; then 
-      curl  -H "Content-Type: application/json" \
-      -d '{
-      "username":"['$HOSTNAME']",
-      "content":null,
-      "embeds":[
-         {
-            "title":" 🚀 Les packages mis à jour !",
-            "color":5832543,
-            "fields":[
-               {
-                  "name":" 🚀 Mise à jour automatique",
-                  "value":"'$UPDATED'",
-                  "inline":false
-               }
-            ],
-            "author":{
-               "name":"'$HOSTNAME'"
-            }
-         }
-      ],
-      "attachments":[
-         
-      ]
-   }' \
-      $DISCORD_WEBHOOK
-      exit
-   fi
+  send_zabbix_data "update.container_to_update_nb" "$CONTAINERS_NB"
+  send_zabbix_data "update.container_to_update_names" "$CONTAINERS_Z"
+  send_zabbix_data "update.container_updated_nb" "$CONTAINERS_NB_U"
+  send_zabbix_data "update.container_updated_names" "$UPDATED_Z"
 
+  send_discord
+  log info "container-updater end" "containers_to_update=$CONTAINERS_NB containers_updated=$CONTAINERS_NB_U"
+}
 
-   if [[ ! -z "$UPDATE" ]] && [[ ! -z "$PAQUET_UPDATE" ]]; then 
-      curl  -H "Content-Type: application/json" \
-      -d '{
-         "username": "['$HOSTNAME']",
-         "content":null,
-         "embeds":[
-            {
-               "title":" 🚸 Il y a des mises à jour à faire !",
-               "color":16759896,
-                  "fields":[
-                  {
-                     "name":"Paquets",
-                     "value":"'$PAQUET_UPDATE'",
-                     "inline":true
-                  },
-                  {
-                     "name":"Containers",
-                     "value":"'$CONTAINERS'",
-                     "inline":true
-                  },
-                  {
-                     "name":"Images",
-                     "value":"'$UPDATE'",
-                     "inline":true
-                  }
-               ],
-               "author":{
-                  "name":"'$HOSTNAME'"
-               }
-            }
-         ],
-         "attachments":[
-            
-         ]
-      }' \
-      $DISCORD_WEBHOOK
-      exit
-   fi
-
-   if [[ ! -z "$UPDATE" ]]; then 
-      curl  -H "Content-Type: application/json" \
-      -d '{
-         "username": "['$HOSTNAME']",
-         "content":null,
-         "embeds":[
-            {
-               "title":" 🚸 Il y a des mises à jour à faire !",
-               "color":16759896,
-               "fields":[
-                  {
-                     "name":"Containers",
-                     "value":"'$CONTAINERS'",
-                     "inline":true
-                  },
-                  {
-                     "name":"Images",
-                     "value":"'$UPDATE'",
-                     "inline":true
-                  }
-               ],
-               "author":{
-                  "name":"'$HOSTNAME'"
-               }
-            }
-         ],
-         "attachments":[
-            
-         ]
-      }' \
-      $DISCORD_WEBHOOK
-      exit
-   fi
-
-   if [[ ! -z "$PAQUET_UPDATE" ]]; then 
-      curl  -H "Content-Type: application/json" \
-      -d '{
-         "username": "['$HOSTNAME']",
-         "content":null,
-         "embeds":[
-            {
-               "title":" 🚸 Il y a des mises à jour à faire !",
-               "color":16759896,
-                  "fields":[
-                  {
-                     "name":"Paquets",
-                     "value":"'$PAQUET_UPDATE'",
-                     "inline":true
-                  }
-               ],
-               "author":{
-                  "name":"'$HOSTNAME'"
-               }
-            }
-         ],
-         "attachments":[
-            
-         ]
-      }' \
-      $DISCORD_WEBHOOK
-      exit
-   else
-      curl  -H "Content-Type: application/json" \
-      -d '{
-      "username":"['$HOSTNAME']",
-      "content":null,
-      "embeds":[
-         {
-            "title":" ✅ Tout est à jour ! 😍",
-            "color":5832543,
-            "author":{
-               "name":"'$HOSTNAME'"
-            }
-         }
-      ],
-      "attachments":[
-         
-      ]
-   }' \
-      $DISCORD_WEBHOOK
-   fi
-fi
+main "$@"

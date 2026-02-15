@@ -1,98 +1,113 @@
-<p align="center">
-  <a href="#"><img src="https://readme-typing-svg.herokuapp.com?center=true&vCenter=true&lines=Container+updater;"></a>
-</p>
-<p align="center">
-    🚀 Un petit script bash pour mettre à jour les conteneurs avec alerte et de mise à jour automatique avec Portainer.
-</p>
-<p align="center">
-    <a href="https://github.com/Drack0rr/container-updater#conditions"><img src="https://img.shields.io/badge/How_to_use-%2341454A.svg?style=for-the-badge&logo=target&logoColor=white"> </a>
-    <a href="https://github.com/Drack0rr/container-updater#monitoring"><img src="https://img.shields.io/badge/Monitoring-%2341454A.svg?style=for-the-badge&logo=target&logoColor=white"> </a>
-    <a href="https://github.com/Drack0rr/container-updater#auto-update"><img src="https://img.shields.io/badge/Auto_update-%2341454A.svg?style=for-the-badge&logo=target&logoColor=white"> </a>
-    <br /><br />
-    <a href="#"><img src="https://img.shields.io/badge/bash-%23CDCDCE.svg?style=for-the-badge&logo=gnubash&logoColor=1B1B1F"> </a>
-    <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/docker-%232496ED.svg?style=for-the-badge&logo=docker&logoColor=white"> </a>
-    <a href="https://www.portainer.io/"><img src="https://img.shields.io/badge/portainer-%2313BEF9.svg?style=for-the-badge&logo=portainer&logoColor=white"> </a>
-    <a href="https://zabbix.com"><img src="https://img.shields.io/badge/zabbix-%23CC2936.svg?style=for-the-badge&logo=zotero&logoColor=white"> </a>
-    <a href="https://www.discord.com"><img src="https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white"> </a>
-    <br />
-</p> 
+# container-updater
 
-🔵 Prise en charge des registres Docker hub (docker.io) et Github (ghcr.io)
+Script Bash pour détecter et appliquer des mises à jour de conteneurs Docker via labels (`monitor`, `docker-compose`, `Portainer`), avec notifications Discord et métriques Zabbix optionnelles.
 
-🟣 Envoyer une notification à Discord (facultatif)
+## Nouveautés (modernisation 2026)
 
-🔴 Envoyer des données à Zabbix (facultatif)
+- Script durci: `set -Eeuo pipefail`, quoting strict, gestion d'erreurs centralisée.
+- Logs structurés (`text` ou `json`) et mode `--dry-run`.
+- Intégration `.env` standard (`.env.example` fourni).
+- Dockerfile moderne avec `HEALTHCHECK`.
+- `compose.yaml` exemple (Docker Compose v2).
+- CI GitHub Actions: lint shell, build image, scans Trivy.
 
-🔆 Notification Discord (facultatif)
+## Prérequis
 
-## Conditions
-```
-jq, zabbix-sender (si vous utilisez Zabbix)
-```
+- `bash`
+- `docker` (daemon accessible)
+- `jq`
+- `curl`
+- `zabbix_sender` (uniquement si Zabbix est activé)
 
-## Utilisation
+## Usage local
+
 ```bash
-git clone https://github.com/Drack0rr/container-updater
-cd container-updater
-./container-updater.sh
+chmod +x ./container-updater.sh
+./container-updater.sh --help
 ```
 
-Si vous utilisez Github comme registre, vous devez définir votre token d'accès personnel :
+Exemple:
+
 ```bash
--g <access_tocken>
+./container-updater.sh \
+  -d "$DISCORD_WEBHOOK" \
+  -z "$ZABBIX_SERVER" \
+  -n "prod-host" \
+  --no-system-update
 ```
 
-Vous pouvez envoyer une notification à Discord avec cet argument :
+## Variables d'environnement
+
+Copier le modèle:
+
 ```bash
--d <discord_webhook>
+cp .env.example .env
 ```
 
-Vous pouvez envoyer des données à Zabbix avec cet argument :
-```bash
--z <zabbix_server>
--n <host_name> (optional)
-```
+Variables principales:
 
-Vous pouvez mettre les packages sur Blacklist pour la mise à jour automatique :
-```bash
--b <package,package>
-```
-### Pour une exécution quotidienne, ajoutez un cron
-```bash
-00 09 * * * /chemin/vers/container-updater.sh -d <discord_webhook> -b <package,package> -z <zabbix_server> >> /var/log/container-updater.log
-```
+- `DISCORD_WEBHOOK`: webhook Discord.
+- `ZABBIX_SERVER`: serveur Zabbix.
+- `ZABBIX_HOST`: nom d'hôte envoyé à Zabbix.
+- `GHCR_USERNAME`, `GHCR_TOKEN`: auth GHCR (images privées).
+- `UPDATE_SYSTEM_PACKAGES`: `true|false` (apt/dnf).
+- `BLACKLIST`: liste CSV de paquets.
+- `DRY_RUN`: `true|false`.
+- `LOG_FORMAT`: `text|json`.
 
-## Monitoring
-Pour superviser les mises à jour d'un conteneur, il vous suffit d'ajouter ce label :
+## Labels de conteneur supportés
+
+### Monitoring uniquement
+
 ```yaml
 labels:
-    - "autoupdate=monitor"
+  - "autoupdate=monitor"
 ```
-Dans ce cas, si une mise à jour est disponible, le script enverra simplement une notification à Discord.
-Tout ce que vous avez à faire est de mettre à jour le conteneur.
 
-## Auto-update
-Pour activer la mise à jour automatique du conteneur, vous devez ajouter ces labels :
+### Mise à jour automatique via Docker Compose
 
+```yaml
+labels:
+  - "autoupdate=true"
+  - "autoupdate.docker-compose=/path/to/compose.yaml"
+```
 
-### docker run
+### Mise à jour automatique via webhook Portainer
+
+```yaml
+labels:
+  - "autoupdate=true"
+  - "autoupdate.webhook=https://..."
+```
+
+## Changement important (sécurité)
+
+Le mode `autoupdate.docker-run` legacy n'exécute plus de reconstruction dynamique de commande `docker run`.
+
+Raison: ce mécanisme reposait sur des patterns à haut risque (`eval`, template distant) incompatibles avec un niveau de sécurité 2026. La migration recommandée est `autoupdate.docker-compose` ou `autoupdate.webhook`.
+
+## Exécution en conteneur (Compose v2)
+
 ```bash
--l "autoupdate=true" -l "autoupdate.docker-run=true"
+docker compose up -d --build
 ```
 
-### docker-compose
-```yaml
-labels:
-    - "autoupdate=true"
-    - "autoupdate.docker-compose=/link/to/docker-compose.yml"
+`compose.yaml` monte `/var/run/docker.sock` pour piloter le daemon hôte.
+
+## CI/CD
+
+Workflow: `.github/workflows/ci.yml`
+
+- Shell lint: `shellcheck`, `shfmt`
+- Build Docker: `docker/build-push-action`
+- Scan sécurité: Trivy (filesystem + image)
+
+## Healthcheck
+
+```bash
+./container-updater.sh --healthcheck
 ```
 
-### Portainer
-Vous devez avoir Portainer en version entreprise ([licence gratuite jusqu'à 5 nœuds](https://www.portainer.io/pricing/take5?hsLang=en)). 
-Vous pouvez trouver le webhook dans les paramètres de la stack ou du conteneur.
-```yaml
-labels:
-    - "autoupdate=true"
-    - "autoupdate.webhook=<webhook_url>"
-```
+## Zabbix template
 
+Template fourni: `Zabbix-Template_App-Maj.yml`

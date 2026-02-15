@@ -1,0 +1,4 @@
+# Global shellcheck profile for this repository
+severity=warning
+shell=bash
+external-sources=true
