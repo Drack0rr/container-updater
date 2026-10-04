@@ -22,10 +22,10 @@ jobs:
           sudo apt-get install -y shellcheck shfmt
 
       - name: Shellcheck
-        run: shellcheck container-updater.sh
+        run: shellcheck container-updater.sh tests/test-swarm-behavior.sh tests/mocks/*
 
       - name: Shfmt
-        run: shfmt -d -i 2 -ci container-updater.sh
+        run: shfmt -d -i 2 -ci container-updater.sh tests/test-swarm-behavior.sh tests/mocks/*
 
   behavior-tests:
     runs-on: ubuntu-latest

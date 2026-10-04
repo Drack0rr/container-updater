@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+echo "curl $*" >>"${MOCK_DIR:?}/calls"
+case "${MOCK_SCENARIO:?}" in
+  webhook_http_error)
+    echo 500
+    exit 22
+    ;;
+  webhook_redirect)
+    echo 302
+    exit 0
+    ;;
+  webhook_timeout) exit 28 ;;
+esac
+touch "$MOCK_DIR/submitted"
+echo 204

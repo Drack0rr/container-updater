@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+echo "docker $*" >>"${MOCK_DIR:?}/calls"
+scenario="${MOCK_SCENARIO:?}"
+old="sha256:$(printf 'a%.0s' {1..64})"
+new="sha256:$(printf 'b%.0s' {1..64})"
+child="sha256:$(printf 'c%.0s' {1..64})"
+other="sha256:$(printf 'd%.0s' {1..64})"
+case "$1 ${2:-}" in
+  'info --format')
+    case "$3" in
+      *LocalNodeState*) if [[ "$scenario" == standalone* ]]; then echo inactive; else echo active; fi ;;
+      *ControlAvailable*) if [[ "$scenario" == worker ]]; then echo false; else echo true; fi ;;
+    esac
+    ;;
+  'info ') ;;
+  'buildx version') [[ "$scenario" != no_buildx ]] ;;
+  'buildx imagetools')
+    case "$scenario" in
+      rate_limit)
+        echo 'toomanyrequests sensitive-placeholder' >&2
+        exit 1
+        ;;
+      registry_error)
+        echo 'connection refused sensitive-placeholder' >&2
+        exit 1
+        ;;
+      registry_auth)
+        echo '401 Unauthorized sensitive-placeholder' >&2
+        exit 1
+        ;;
+      http_rate_limit)
+        echo 'unexpected status: 429 Too Many Requests sensitive-placeholder' >&2
+        exit 1
+        ;;
+      malformed_manifest)
+        echo '{}'
+        exit 0
+        ;;
+      single_manifest)
+        jq -cn --arg digest "$new" '{schemaVersion:2,mediaType:"application/vnd.oci.image.manifest.v1+json",digest:$digest}'
+        exit 0
+        ;;
+    esac
+    jq -cn --arg digest "$new" --arg child "$child" --arg other "$other" \
+      '{schemaVersion:2,mediaType:"application/vnd.oci.image.index.v1+json",digest:$digest,manifests:[
+        {digest:$child,platform:{os:"linux",architecture:"amd64"}},
+        {digest:$other,platform:{os:"linux",architecture:"arm64"}}]}'
+    ;;
+  'service ls')
+    [[ "$scenario" != list_error ]] || exit 1
+    if [[ "$3" == --filter ]]; then
+      if [[ "$scenario" == incomplete_replicas ]]; then echo '0/1'; else echo '1/1'; fi
+    else
+      echo svc1
+      if [[ "$scenario" == shared_webhook ]]; then echo svc2; fi
+    fi
+    ;;
+  'service inspect')
+    [[ "$scenario" != inspect_error ]] || exit 1
+    id=service-id-1
+    [[ "$3" != svc2 && "$3" != service-id-2 ]] || id=service-id-2
+    policy=true
+    task_policy=''
+    webhook=''
+    compose=''
+    image="example/svc:latest@$old"
+    state=''
+    version=1
+    replicas=1
+    mode=replicated
+    case "$scenario" in
+      task_label)
+        policy=''
+        task_policy=true
+        ;;
+      disabled)
+        policy=false
+        task_policy=true
+        ;;
+      unlabeled) policy='' ;;
+      monitor) policy=monitor ;;
+      invalid_policy) policy=bogus ;;
+      current_index | single_manifest) image="example/svc:latest@$new" ;;
+      current_child) image="example/svc:latest@$child" ;;
+      digest_only) image="registry.example:5000/svc@$old" ;;
+      unpinned_*) image='example/svc:latest' ;;
+      untagged_outdated) image='example/svc' ;;
+      stopped) replicas=0 ;;
+      job) mode=job ;;
+    esac
+    if [[ "$scenario" == webhook* || "$scenario" == shared_webhook ]]; then
+      webhook='https://example.invalid/webhook'
+      compose='/example/compose.yaml'
+    fi
+    if [[ "$scenario" == concurrent_change && "$3" == service-id-* ]]; then version=2; fi
+    if [[ -f "$MOCK_DIR/submitted" ]]; then
+      # Keep the second service pending until its preflight read.
+      if [[ "$scenario" != shared_webhook || "$id" == service-id-1 || -f "$MOCK_DIR/second-preflight" ]]; then
+        image="example/svc:latest@$new"
+        state=completed
+      elif [[ "$3" == service-id-2 ]]; then
+        touch "$MOCK_DIR/second-preflight"
+      fi
+      case "$scenario" in
+        webhook_unchanged) image="example/svc:latest@$old" ;;
+        rollout_paused) state=paused ;;
+        rollout_rollback) state=rollback_completed ;;
+      esac
+    fi
+    jq -cn --arg id "$id" --arg policy "$policy" --arg task "$task_policy" \
+      --arg image "$image" --arg webhook "$webhook" --arg compose "$compose" \
+      --arg state "$state" --argjson version "$version" --argjson replicas "$replicas" --arg mode "$mode" \
+      '[{ID:$id,Version:{Index:$version},UpdateStatus:{State:$state},Spec:{
+        Name:$id,Labels:({} + (if $policy != "" then {autoupdate:$policy} else {} end) +
+          (if $webhook != "" then {"autoupdate.webhook":$webhook,"autoupdate.docker-compose":$compose} else {} end)),
+        Mode:(if $mode == "job" then {ReplicatedJob:{MaxConcurrent:1}} else {Replicated:{Replicas:$replicas}} end),
+        TaskTemplate:{ContainerSpec:{Image:$image,Labels:(if $task != "" then {autoupdate:$task} else {} end)}}}}]'
+    ;;
+  'service update') touch "$MOCK_DIR/submitted" ;;
+  'service ps') echo task-id-1 ;;
+  'inspect --type')
+    digest="$old"
+    if [[ -f "$MOCK_DIR/submitted" || "$scenario" == unpinned_current ]]; then digest="$new"; fi
+    [[ "$scenario" != tasks_old ]] || digest="$old"
+    image="example/svc:latest@$digest"
+    [[ "$scenario" != unpinned_unknown ]] || image='example/svc:latest'
+    state=running
+    [[ "$scenario" != tasks_unhealthy ]] || state=starting
+    jq -cn --arg image "$image" --arg state "$state" '[{Status:{State:$state},Spec:{ContainerSpec:{Image:$image}}}]'
+    ;;
+  'ps --format') echo standalone-app ;;
+  'container inspect')
+    policy=true
+    [[ "$scenario" != standalone_false ]] || policy=false
+    jq -cn --arg policy "$policy" '[{Config:{Image:"example/svc:latest",Labels:{autoupdate:$policy,"autoupdate.webhook":"https://example.invalid/webhook"}}}]'
+    ;;
+  'image inspect') if [[ -f "$MOCK_DIR/pulled" ]]; then echo "$new"; else echo "$old"; fi ;;
+  'pull example/svc:latest') touch "$MOCK_DIR/pulled" ;;
+  'image prune') ;;
+  *)
+    echo "Unexpected mock Docker invocation: $*" >&2
+    exit 1
+    ;;
+esac

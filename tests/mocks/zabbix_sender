@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+echo "zabbix_sender $*" >>"${MOCK_DIR:?}/calls"
