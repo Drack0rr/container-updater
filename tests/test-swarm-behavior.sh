@@ -111,6 +111,20 @@ no_mutations
 run_case malformed_manifest 1 --dry-run
 output_has 'INVALID_REGISTRY_MANIFEST'
 no_mutations
+for scenario in empty_manifest whitespace_manifest; do
+  run_case "$scenario" 1 --dry-run
+  output_has 'INVALID_REGISTRY_MANIFEST'
+  no_mutations
+done
+run_case tasks_empty 1 --dry-run
+output_has 'RUNNING_IMAGE_DIGEST_UNKNOWN'
+no_mutations
+run_case preflight_empty 1
+output_has 'SERVICE_CHANGED_DURING_SCAN'
+no_mutations
+run_case rollout_empty 1
+output_has 'pending=1'
+output_has 'applied=0'
 run_case no_buildx 1
 output_has 'BUILDX_UNAVAILABLE'
 no_mutations
@@ -169,6 +183,9 @@ run_case list_error 1
 output_has 'SERVICE_LIST_FAILED'
 no_mutations
 run_case inspect_error 1
+output_has 'SERVICE_INSPECT_FAILED'
+no_mutations
+run_case inspect_whitespace 1
 output_has 'SERVICE_INSPECT_FAILED'
 no_mutations
 run_case shared_webhook 0

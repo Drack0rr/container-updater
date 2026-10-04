@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.1 — 2026-10-04
+
+- Rejette explicitement les réponses JSON vides ou composées d'espaces, y compris
+  avec jq 1.6 (Debian 12), avant les contrôles de service, registre et convergence.
+- Ajoute six tests de régression et une exécution CI sur Ubuntu 22.04/jq 1.6.
+
 ## 2.2.0 — 2026-10-04
 
 - Surveille par défaut les services Swarm sans label ; ajoute `--unlabeled-policy ignore`.

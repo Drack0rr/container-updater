@@ -37,6 +37,11 @@ case "$1 ${2:-}" in
         echo '{}'
         exit 0
         ;;
+      empty_manifest) exit 0 ;;
+      whitespace_manifest)
+        printf ' \n\t'
+        exit 0
+        ;;
       single_manifest)
         jq -cn --arg digest "$new" '{schemaVersion:2,mediaType:"application/vnd.oci.image.manifest.v1+json",digest:$digest}'
         exit 0
@@ -58,6 +63,12 @@ case "$1 ${2:-}" in
     ;;
   'service inspect')
     [[ "$scenario" != inspect_error ]] || exit 1
+    if [[ "$scenario" == inspect_whitespace ]]; then
+      printf ' \n\t'
+      exit 0
+    fi
+    if [[ "$scenario" == preflight_empty && "$3" == service-id-* ]]; then exit 0; fi
+    if [[ "$scenario" == rollout_empty && -f "$MOCK_DIR/submitted" ]]; then exit 0; fi
     id=service-id-1
     [[ "$3" != svc2 && "$3" != service-id-2 ]] || id=service-id-2
     policy=true
@@ -84,7 +95,7 @@ case "$1 ${2:-}" in
       current_index | single_manifest) image="example/svc:latest@$new" ;;
       current_child) image="example/svc:latest@$child" ;;
       digest_only) image="registry.example:5000/svc@$old" ;;
-      unpinned_*) image='example/svc:latest' ;;
+      unpinned_* | tasks_empty) image='example/svc:latest' ;;
       untagged_outdated) image='example/svc' ;;
       stopped) replicas=0 ;;
       job) mode=job ;;
@@ -120,6 +131,7 @@ case "$1 ${2:-}" in
   'service update') touch "$MOCK_DIR/submitted" ;;
   'service ps') echo task-id-1 ;;
   'inspect --type')
+    [[ "$scenario" != tasks_empty ]] || exit 0
     digest="$old"
     if [[ -f "$MOCK_DIR/submitted" || "$scenario" == unpinned_current ]]; then digest="$new"; fi
     [[ "$scenario" != tasks_old ]] || digest="$old"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SCRIPT_VERSION="2.2.0"
+SCRIPT_VERSION="2.2.1"
 
 # -----------------------------
 # Defaults (can be overridden by env or CLI)
@@ -344,6 +344,14 @@ detect_execution_mode() {
   fi
 }
 
+# jq 1.6 can return success on empty/whitespace input even with -e. Slurping
+# enforces exactly one JSON document before evaluating any validation filter.
+json_matches() {
+  local filter="$1"
+  shift
+  jq -e -s "$@" "length == 1 and (.[0] | ($filter))"
+}
+
 # Buildx exposes the registry's top-level digest for both indexes and single
 # manifests. Never compare an index digest with just the manager's architecture.
 # Results use globals: command substitution would lose the error and cache state.
@@ -375,7 +383,7 @@ get_remote_digest_for_image() {
       return 1
     fi
     rm -f "$error_file"
-    if ! jq -e '.digest | strings | test("^sha256:[a-f0-9]{64}$")' <<<"$payload" >/dev/null 2>&1; then
+    if ! json_matches '.digest // "" | test("^sha256:[a-f0-9]{64}$")' <<<"$payload" >/dev/null 2>&1; then
       REMOTE_DIGEST_LAST_ERROR="INVALID_REGISTRY_MANIFEST"
       MANIFEST_ERRORS[$image_ref]="$REMOTE_DIGEST_LAST_ERROR"
       return 1
@@ -411,7 +419,7 @@ get_running_task_digests() {
   if ! tasks="$(timeout "$DOCKER_TIMEOUT" docker inspect --type task "${ids[@]}" 2>/dev/null)"; then
     return 1
   fi
-  if ! jq -e 'length > 0 and all(.[]; .Status.State == "running" and
+  if ! json_matches 'length > 0 and all(.[]; .Status.State == "running" and
       (.Spec.ContainerSpec.Image | test("@sha256:[a-f0-9]{64}$")))' <<<"$tasks" >/dev/null 2>&1; then
     return 1
   fi
@@ -424,7 +432,7 @@ wait_for_swarm_update() {
   local data image state replicas desired running
   while ((SECONDS < deadline)); do
     data="$(timeout "$DOCKER_TIMEOUT" docker service inspect "$service" 2>/dev/null || true)"
-    if ! jq -e 'length == 1 and .[0].Spec.TaskTemplate.ContainerSpec.Image != null' <<<"$data" >/dev/null 2>&1; then
+    if ! json_matches 'length == 1 and .[0].Spec.TaskTemplate.ContainerSpec.Image != null' <<<"$data" >/dev/null 2>&1; then
       log warn "unable to verify submitted update" "service=$service"
       return 2
     fi
@@ -647,7 +655,7 @@ check_swarm_services() {
   for service in "${services[@]}"; do
     ((WORKLOAD_DISCOVERED_NB += 1))
     inspect_data="$(timeout "$DOCKER_TIMEOUT" docker service inspect "$service" 2>/dev/null || true)"
-    if ! jq -e 'length == 1 and .[0].ID != null and .[0].Version.Index != null' <<<"$inspect_data" >/dev/null 2>&1; then
+    if ! json_matches 'length == 1 and .[0].ID != null and .[0].Version.Index != null' <<<"$inspect_data" >/dev/null 2>&1; then
       record_update_failure "$service" "unknown" "SERVICE_INSPECT_FAILED"
       continue
     fi
@@ -741,8 +749,10 @@ check_swarm_services() {
     # Re-read the stable ID and version immediately before any mutation. A
     # concurrent redeploy requires a new scan, not overwriting somebody's work.
     current_data="$(timeout "$DOCKER_TIMEOUT" docker service inspect "$service_id" 2>/dev/null || true)"
-    if ! jq -e --arg id "$service_id" --arg version "$version" \
-      '.[0].ID == $id and (.[0].Version.Index | tostring) == $version' <<<"$current_data" >/dev/null 2>&1; then
+    # The filter variables belong to jq and are supplied via --arg.
+    # shellcheck disable=SC2016
+    if ! json_matches '.[0].ID == $id and (.[0].Version.Index | tostring) == $version' \
+      --arg id "$service_id" --arg version "$version" <<<"$current_data" >/dev/null 2>&1; then
       record_check_skipped "$service" "SERVICE_CHANGED_DURING_SCAN"
       continue
     fi
