@@ -236,6 +236,8 @@ docker compose up -d --build
 
 Workflow: `.github/workflows/ci.yml`
 
+Validation complète uniquement sur les tags `v*` ou sur lancement manuel. Les PR et les pushes de branches ne lancent aucune CI. Ce dépôt ne publie pas d’image depuis GitHub Actions.
+
 - Shell lint: `shellcheck`, `shfmt`
 - Build Docker: `docker/build-push-action`
 - Scan sécurité: Trivy (filesystem + image)
